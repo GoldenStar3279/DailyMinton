@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { GenderBadge } from "@/components/common/GenderBadge";
 import { Modal } from "@/components/common/Modal";
 import { PlayerBlock } from "@/components/common/PlayerBlock";
@@ -185,7 +191,7 @@ function resolveInitialMeetup(meetupId: number): MeetupScheduleDto {
   return INITIAL_MEETUPS.find((m) => m.id === meetupId) ?? INITIAL_MEETUPS[0];
 }
 
-export default function SessionMatchPage() {
+function SessionMatchContent() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -4188,5 +4194,19 @@ export default function SessionMatchPage() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+export default function SessionMatchPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-[#0d0f14] text-sm text-zinc-400">
+          경기 진행 현황판을 불러오는 중입니다...
+        </div>
+      }
+    >
+      <SessionMatchContent />
+    </Suspense>
   );
 }

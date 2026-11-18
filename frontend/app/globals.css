@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0d0f14;
+  --foreground: #f4f4f5;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  /* 전반적인 텍스트 가독성 향상을 위해 기본 타이포그래피 스케일 상향 */
+  --text-xs: 0.85rem;
+  --text-xs--line-height: 1.35;
+  --text-sm: 0.96rem;
+  --text-sm--line-height: 1.45;
+  --text-base: 1.075rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.2rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.35rem;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.6rem;
+  --text-2xl--line-height: 1.35;
+}
+
+html {
+  font-size: 16.5px;
+}
+
+@media (min-width: 768px) {
+  html {
+    font-size: 17.5px;
+  }
+}
+
+@media (min-width: 1024px) {
+  html {
+    font-size: 18.5px;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Pretendard", "Malgun Gothic", sans-serif;
+}
+
+dialog::backdrop {
+  background-color: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}

@@ -3586,7 +3586,7 @@ export default function SessionMatchPage() {
           setAddMemberSearch("");
         }}
         title={`모임 회원 참석예정자 추가 (미참석 ${unaddedClubMembers.length}명)`}
-        size="3xl"
+        size="4xl"
       >
         <div className="space-y-4">
           <search>

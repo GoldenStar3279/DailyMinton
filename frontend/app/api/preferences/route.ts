@@ -1,13 +1,6 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { connection, NextResponse } from "next/server";
+import { getDbPool } from "@/lib/db";
 import type { MemberPreferenceDto } from "@/types/home";
-
-const execFileAsync = promisify(execFile);
-
-const DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://postgres:postgres@localhost:5432/dailyminton";
 
 interface PartnerRow {
   member_id: number;
@@ -26,23 +19,15 @@ interface AvoidRow {
 export async function GET() {
   await connection();
   try {
-    const sql = `
-      SELECT json_build_object(
-        'partners', COALESCE((SELECT json_agg(json_build_object('member_id', member_id, 'partner_member_id', partner_member_id, 'match_type', match_type)) FROM partner_preferences), '[]'::json),
-        'avoids', COALESCE((SELECT json_agg(json_build_object('member_id', member_id, 'avoided_member_id', avoided_member_id)) FROM avoid_preferences), '[]'::json)
-      );
-    `;
-
-    const { stdout } = await execFileAsync(
-      "psql",
-      [DB_URL, "-X", "-q", "-t", "-A", "-c", sql],
-      { timeout: 3000 }
-    );
-
-    const parsed = JSON.parse(stdout.trim() || "{}") as {
-      partners?: PartnerRow[];
-      avoids?: AvoidRow[];
-    };
+    const pool = getDbPool();
+    const [partnerResult, avoidResult] = await Promise.all([
+      pool.query<PartnerRow>(
+        "SELECT member_id, partner_member_id, match_type FROM partner_preferences;"
+      ),
+      pool.query<AvoidRow>(
+        "SELECT member_id, avoided_member_id FROM avoid_preferences;"
+      ),
+    ]);
 
     const map: Record<number, MemberPreferenceDto> = {};
     const ensureEntry = (id: number): MemberPreferenceDto => {
@@ -57,7 +42,7 @@ export async function GET() {
       return map[id];
     };
 
-    (parsed.partners || []).forEach((row) => {
+    partnerResult.rows.forEach((row) => {
       const entry = ensureEntry(Number(row.member_id));
       if (row.match_type === "MIXED_DOUBLE") {
         entry.mixedPartnerId = Number(row.partner_member_id);
@@ -66,7 +51,7 @@ export async function GET() {
       }
     });
 
-    (parsed.avoids || []).forEach((row) => {
+    avoidResult.rows.forEach((row) => {
       const entry = ensureEntry(Number(row.member_id));
       if (
         entry.avoidMemberIds.length < 3 &&
@@ -123,34 +108,44 @@ export async function PUT(request: Request) {
       )
     ).slice(0, 3);
 
-    const statements: string[] = [
-      "BEGIN;",
-      `DELETE FROM partner_preferences WHERE member_id = ${memberId};`,
-      `DELETE FROM avoid_preferences WHERE member_id = ${memberId};`,
-    ];
+    const pool = getDbPool();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "DELETE FROM partner_preferences WHERE member_id = $1;",
+        [memberId]
+      );
+      await client.query(
+        "DELETE FROM avoid_preferences WHERE member_id = $1;",
+        [memberId]
+      );
 
-    if (samePartner) {
-      statements.push(
-        `INSERT INTO partner_preferences (member_id, partner_member_id, match_type) VALUES (${memberId}, ${samePartner}, '${sameType}') ON CONFLICT DO NOTHING;`
-      );
+      if (samePartner) {
+        await client.query(
+          "INSERT INTO partner_preferences (member_id, partner_member_id, match_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING;",
+          [memberId, samePartner, sameType]
+        );
+      }
+      if (mixedPartner) {
+        await client.query(
+          "INSERT INTO partner_preferences (member_id, partner_member_id, match_type) VALUES ($1, $2, 'MIXED_DOUBLE') ON CONFLICT DO NOTHING;",
+          [memberId, mixedPartner]
+        );
+      }
+      for (const avoidId of avoidIds) {
+        await client.query(
+          "INSERT INTO avoid_preferences (member_id, avoided_member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+          [memberId, avoidId]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
-    if (mixedPartner) {
-      statements.push(
-        `INSERT INTO partner_preferences (member_id, partner_member_id, match_type) VALUES (${memberId}, ${mixedPartner}, 'MIXED_DOUBLE') ON CONFLICT DO NOTHING;`
-      );
-    }
-    for (const avoidId of avoidIds) {
-      statements.push(
-        `INSERT INTO avoid_preferences (member_id, avoided_member_id) VALUES (${memberId}, ${avoidId}) ON CONFLICT DO NOTHING;`
-      );
-    }
-    statements.push("COMMIT;");
-
-    await execFileAsync(
-      "psql",
-      [DB_URL, "-X", "-q", "-c", statements.join("\n")],
-      { timeout: 3000 }
-    );
 
     return NextResponse.json({
       success: true,

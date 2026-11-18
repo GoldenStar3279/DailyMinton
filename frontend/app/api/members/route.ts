@@ -1,11 +1,10 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { connection, NextResponse } from "next/server";
 import {
   GRADE_BASE_ELO,
   getAvatarGradientByGender,
   INITIAL_MEMBERS,
 } from "@/data/membersData";
+import { getDbPool } from "@/lib/db";
 import type {
   AgeGroup,
   Gender,
@@ -13,8 +12,6 @@ import type {
   MemberDto,
   MemberRole,
 } from "@/types/home";
-
-const execFileAsync = promisify(execFile);
 
 interface DbMemberRow {
   id: number;
@@ -28,48 +25,31 @@ interface DbMemberRow {
   joined_at: string;
 }
 
-const DB_URL =
-  process.env.DATABASE_URL ||
-  "postgresql://postgres:postgres@localhost:5432/dailyminton";
-
-function escapeSqlLiteral(val: string): string {
-  return val.replace(/'/g, "''");
-}
-
 /**
  * PostgreSQL(dailyminton DB)의 members 테이블을 실시간으로 조회하여 반환합니다.
  */
 export async function GET() {
   await connection();
   try {
-    const sql = `
-      SELECT COALESCE(
-        json_agg(
-          json_build_object(
-            'id', id,
-            'name', name,
-            'login_id', login_id,
-            'role', role,
-            'gender', gender,
-            'grade', grade,
-            'age_group', age_group,
-            'elo_score', elo_score,
-            'joined_at', to_char(joined_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD')
-          ) ORDER BY id ASC
-        ),
-        '[]'::json
-      )
+    const pool = getDbPool();
+    const { rows } = await pool.query<DbMemberRow>(
+      `
+      SELECT
+        id,
+        name,
+        login_id,
+        role,
+        gender,
+        grade,
+        age_group,
+        elo_score,
+        to_char(joined_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS joined_at
       FROM members
-      WHERE is_active = TRUE;
-    `;
-
-    const { stdout } = await execFileAsync(
-      "psql",
-      [DB_URL, "-X", "-q", "-t", "-A", "-c", sql],
-      { timeout: 3000 }
+      WHERE is_active = TRUE
+      ORDER BY id ASC;
+      `
     );
 
-    const rows: DbMemberRow[] = JSON.parse(stdout.trim() || "[]");
     if (!Array.isArray(rows) || rows.length === 0) {
       return NextResponse.json(INITIAL_MEMBERS);
     }
@@ -125,7 +105,6 @@ export async function POST(request: Request) {
       grade?: Grade;
       ageGroup?: AgeGroup;
       joinedAt?: string;
-      bio?: string;
     };
 
     const rawName = (body.name || "").trim();
@@ -143,13 +122,23 @@ export async function POST(request: Request) {
     const joinedAt = (body.joinedAt || "2026-11-18").trim();
     const eloScore = GRADE_BASE_ELO[grade] ?? 1200;
 
-    const safeName = escapeSqlLiteral(rawName);
-    const safeNickname = escapeSqlLiteral(rawNickname);
-    const safeJoinedAt = escapeSqlLiteral(joinedAt);
-
-    const sql = `
-      INSERT INTO members (name, login_id, password_hash, role, gender, grade, age_group, injury_level, elo_score, is_active, joined_at)
-      VALUES ('${safeName}', '${safeNickname}', '{noop}1234', 'MEMBER', '${gender}', '${grade}', '${ageGroup}', 'NONE', ${eloScore}, TRUE, '${safeJoinedAt} 09:00:00+09')
+    const pool = getDbPool();
+    const { rows } = await pool.query<{ id: number }>(
+      `
+      INSERT INTO members (
+        name,
+        login_id,
+        password_hash,
+        role,
+        gender,
+        grade,
+        age_group,
+        injury_level,
+        elo_score,
+        is_active,
+        joined_at
+      )
+      VALUES ($1, $2, '{noop}1234', 'MEMBER', $3, $4, $5, 'NONE', $6, TRUE, $7::timestamptz)
       ON CONFLICT (login_id) DO UPDATE SET
         name = EXCLUDED.name,
         gender = EXCLUDED.gender,
@@ -160,16 +149,19 @@ export async function POST(request: Request) {
         joined_at = EXCLUDED.joined_at,
         updated_at = now()
       RETURNING id;
-    `;
-
-    const { stdout } = await execFileAsync(
-      "psql",
-      [DB_URL, "-X", "-q", "-t", "-A", "-c", sql],
-      { timeout: 3000 }
+      `,
+      [
+        rawName,
+        rawNickname,
+        gender,
+        grade,
+        ageGroup,
+        eloScore,
+        `${joinedAt} 09:00:00+09`,
+      ]
     );
 
-    const insertedId =
-      Number(stdout.trim().split("\n")[0]) || Date.now();
+    const insertedId = Number(rows[0]?.id) || Date.now();
 
     return NextResponse.json({
       success: true,
@@ -184,7 +176,7 @@ export async function POST(request: Request) {
 }
 
 /**
- * 회원 정보 수정 (운영진 권한 부여/회수 또는 회원관리/프로필에서 급수·성별·연령대·닉네임 변경 시 PostgreSQL DB에 즉시 반영)
+ * 회원 정보 수정 (운영진 권한 부여/회수, 회원 정보 변경, 경기 운영 종료 시 최종 ELO 일괄 반영)
  */
 export async function PATCH(request: Request) {
   await connection();
@@ -201,6 +193,8 @@ export async function PATCH(request: Request) {
       eloUpdates?: Array<{ memberId: number; eloScore: number }>;
     };
 
+    const pool = getDbPool();
+
     // 경기 운영 종료 시 다수 회원의 최종 ELO 일괄 반영
     if (Array.isArray(body.eloUpdates) && body.eloUpdates.length > 0) {
       const validUpdates = body.eloUpdates.filter(
@@ -209,17 +203,26 @@ export async function PATCH(request: Request) {
           Number(u.memberId) > 0 &&
           Number.isFinite(Number(u.eloScore))
       );
+
       if (validUpdates.length > 0) {
-        const sqlBatch = validUpdates
-          .map(
-            (u) =>
-              `UPDATE members SET elo_score = ${Math.max(800, Math.round(Number(u.eloScore)))}, updated_at = now() WHERE id = ${Number(u.memberId)};`
-          )
-          .join("\n");
-        await execFileAsync("psql", [DB_URL, "-X", "-q", "-c", sqlBatch], {
-          timeout: 5000,
-        });
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          for (const u of validUpdates) {
+            await client.query(
+              "UPDATE members SET elo_score = $1, updated_at = now() WHERE id = $2;",
+              [Math.max(800, Math.round(Number(u.eloScore))), Number(u.memberId)]
+            );
+          }
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        } finally {
+          client.release();
+        }
       }
+
       return NextResponse.json({
         success: true,
         updatedCount: validUpdates.length,
@@ -227,7 +230,6 @@ export async function PATCH(request: Request) {
     }
 
     const memberId = Number(body.memberId);
-
     if (!Number.isInteger(memberId) || memberId <= 0) {
       return NextResponse.json(
         { error: "유효하지 않은 회원 ID입니다." },
@@ -235,38 +237,42 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const updates: string[] = ["updated_at = now()"];
+    const setClauses: string[] = ["updated_at = now()"];
+    const values: Array<string | number> = [];
+
+    const pushParam = (column: string, val: string | number) => {
+      values.push(val);
+      setClauses.push(`${column} = $${values.length}`);
+    };
 
     if (body.role === "ADMIN" || body.role === "MEMBER") {
-      updates.push(`role = '${body.role}'`);
+      pushParam("role", body.role);
     }
     if (body.name && body.name.trim()) {
-      updates.push(`name = '${escapeSqlLiteral(body.name.trim())}'`);
+      pushParam("name", body.name.trim());
     }
     if (body.nickname && body.nickname.trim()) {
-      updates.push(`login_id = '${escapeSqlLiteral(body.nickname.trim())}'`);
+      pushParam("login_id", body.nickname.trim());
     }
     if (body.gender === "MALE" || body.gender === "FEMALE") {
-      updates.push(`gender = '${body.gender}'`);
+      pushParam("gender", body.gender);
     }
     if (body.grade && GRADE_BASE_ELO[body.grade]) {
-      updates.push(`grade = '${body.grade}'`);
-      updates.push(`elo_score = ${GRADE_BASE_ELO[body.grade]}`);
+      pushParam("grade", body.grade);
+      pushParam("elo_score", GRADE_BASE_ELO[body.grade]);
     }
     if (body.ageGroup) {
-      updates.push(`age_group = '${escapeSqlLiteral(body.ageGroup)}'`);
+      pushParam("age_group", body.ageGroup);
     }
     if (typeof body.eloScore === "number" && Number.isFinite(body.eloScore)) {
-      updates.push(
-        `elo_score = ${Math.max(800, Math.round(body.eloScore))}`
-      );
+      pushParam("elo_score", Math.max(800, Math.round(body.eloScore)));
     }
 
-    const sql = `UPDATE members SET ${updates.join(", ")} WHERE id = ${memberId};`;
-
-    await execFileAsync("psql", [DB_URL, "-X", "-q", "-c", sql], {
-      timeout: 3000,
-    });
+    values.push(memberId);
+    await pool.query(
+      `UPDATE members SET ${setClauses.join(", ")} WHERE id = $${values.length};`,
+      values
+    );
 
     return NextResponse.json({ success: true, memberId });
   } catch {
@@ -278,7 +284,7 @@ export async function PATCH(request: Request) {
 }
 
 /**
- * 모임 멤버 강퇴 처리 (DELETE /api/members?memberId=...) -> PostgreSQL members 테이블에서 비활성화/삭제
+ * 모임 멤버 강퇴 처리 (DELETE /api/members?memberId=...) -> PostgreSQL members 테이블에서 비활성화
  */
 export async function DELETE(request: Request) {
   await connection();
@@ -293,11 +299,11 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const sql = `UPDATE members SET is_active = FALSE, updated_at = now() WHERE id = ${memberId};`;
-
-    await execFileAsync("psql", [DB_URL, "-X", "-q", "-c", sql], {
-      timeout: 3000,
-    });
+    const pool = getDbPool();
+    await pool.query(
+      "UPDATE members SET is_active = FALSE, updated_at = now() WHERE id = $1;",
+      [memberId]
+    );
 
     return NextResponse.json({ success: true, memberId });
   } catch {

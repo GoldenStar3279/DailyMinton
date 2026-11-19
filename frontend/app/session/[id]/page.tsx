@@ -17,7 +17,6 @@ import {
   GRADE_BASE_ELO,
   GRADE_SORT_ORDER,
   getAvatarGradientByGender,
-  INITIAL_MEETUPS,
   INITIAL_MEMBERS,
 } from "@/data/membersData";
 import type {
@@ -188,7 +187,23 @@ function resolveInitialMeetup(meetupId: number): MeetupScheduleDto {
       // ignore
     }
   }
-  return INITIAL_MEETUPS.find((m) => m.id === meetupId) ?? INITIAL_MEETUPS[0];
+  return {
+    id: meetupId,
+    title: "정모 경기 진행",
+    badgeDay: "",
+    badgeTime: "",
+    dateTimeText: "",
+    location: "체육관",
+    feeText: "입장료 무료",
+    currentParticipants: 0,
+    maxParticipants: 16,
+    participantIds: [],
+    guests: [],
+    availableCourtCount: 6,
+    plannedCourts: [1, 2, 3, 4],
+    participantAvatars: [],
+    thumbnailTheme: "gymWindow",
+  };
 }
 
 function SessionMatchContent() {
@@ -197,9 +212,11 @@ function SessionMatchContent() {
   const searchParams = useSearchParams();
   const meetupId = Number(params?.id || 1);
 
-  // URL 쿼리 파라미터(가장 최신 수정값) -> sessionStorage -> 기본 시드 순으로 정모 및 코트 설정 해석
+  const [dbMeetup, setDbMeetup] = useState<MeetupScheduleDto | null>(null);
+
+  // DB 정모 정보 -> URL 쿼리 파라미터 -> sessionStorage -> 기본 시드 순으로 정모 및 코트 설정 해석
   const meetup = useMemo<MeetupScheduleDto>(() => {
-    const base = resolveInitialMeetup(meetupId);
+    const base = dbMeetup ?? resolveInitialMeetup(meetupId);
     const qTitle = searchParams.get("title");
     const qDate = searchParams.get("date");
     const qLocation = searchParams.get("location");
@@ -208,20 +225,26 @@ function SessionMatchContent() {
     const qPlanned = searchParams.get("planned");
     const qParticipants = searchParams.get("participants");
 
-    const availableCourtCount = qAvailable
-      ? Math.max(1, Number(qAvailable))
-      : base.availableCourtCount || 6;
+    const availableCourtCount = dbMeetup
+      ? dbMeetup.availableCourtCount || 6
+      : qAvailable
+        ? Math.max(1, Number(qAvailable))
+        : base.availableCourtCount || 6;
 
-    const plannedCourts =
-      qPlanned !== null
+    const plannedCourts = dbMeetup
+      ? dbMeetup.plannedCourts || [1, 2, 3, 4]
+      : qPlanned !== null
         ? qPlanned
             .split(",")
             .map((s) => Number(s.trim()))
-            .filter((n) => Number.isInteger(n) && n >= 1 && n <= availableCourtCount)
+            .filter(
+              (n) => Number.isInteger(n) && n >= 1 && n <= availableCourtCount
+            )
         : base.plannedCourts || [1, 2, 3, 4];
 
-    const participantIds =
-      qParticipants !== null && qParticipants.trim().length > 0
+    const participantIds = dbMeetup
+      ? dbMeetup.participantIds
+      : qParticipants !== null && qParticipants.trim().length > 0
         ? qParticipants
             .split(",")
             .map((s) => Number(s.trim()))
@@ -230,15 +253,15 @@ function SessionMatchContent() {
 
     return {
       ...base,
-      title: qTitle || base.title,
-      dateTimeText: qDate || base.dateTimeText,
-      location: qLocation || base.location,
-      feeText: qFee || base.feeText,
+      title: dbMeetup?.title || qTitle || base.title,
+      dateTimeText: dbMeetup?.dateTimeText || qDate || base.dateTimeText,
+      location: dbMeetup?.location || qLocation || base.location,
+      feeText: dbMeetup?.feeText || qFee || base.feeText,
       availableCourtCount,
       plannedCourts,
       participantIds,
     };
-  }, [meetupId, searchParams]);
+  }, [dbMeetup, meetupId, searchParams]);
 
   const [players, setPlayers] = useState<SessionPlayer[]>(() =>
     createInitialSessionPlayers(meetup)
@@ -274,6 +297,174 @@ function SessionMatchContent() {
       };
     });
   }, [meetup, courtActiveOverrides, courtAssignmentMap]);
+
+  // PostgreSQL(dailyminton/Supabase DB)에서 최신 정모 참가자 및 게스트 명단 실시간 동기화
+  useEffect(() => {
+    let isMounted = true;
+    fetch(`/api/meetups?id=${meetupId}`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (
+          data: { source?: string; meetups?: MeetupScheduleDto[] } | null
+        ) => {
+          if (
+            !isMounted ||
+            data?.source !== "db" ||
+            !Array.isArray(data.meetups) ||
+            data.meetups.length === 0
+          ) {
+            return;
+          }
+          const loaded = data.meetups[0];
+          setDbMeetup(loaded);
+
+          setPlayers((prev) => {
+            // 이미 코트/대기/휴식/퇴장 등 경기가 진행된 상태가 아니라면 DB 참가자 기준으로 정확히 동기화
+            const hasActiveProgress = prev.some(
+              (p) =>
+                p.cockSubmitted ||
+                p.status !== "ARRIVED" ||
+                p.totalGameCount > 0
+            );
+            const targetIdSet = new Set(loaded.participantIds || []);
+            const dbGuestList = loaded.guests || [];
+
+            if (!hasActiveProgress) {
+              const memberMap = new Map<number, MemberDto>();
+              clubMembers.forEach((m) => memberMap.set(m.id, m));
+              const baseTime = Date.now() - 3600 * 1000;
+              const syncedMembers: SessionPlayer[] = (
+                loaded.participantIds || []
+              )
+                .map((pid) => memberMap.get(pid))
+                .filter((m): m is MemberDto => m !== undefined)
+                .map((m, idx) => ({
+                  id: m.id,
+                  memberId: m.id,
+                  name: m.name,
+                  nickname: m.nickname,
+                  isGuest: false,
+                  role: m.role,
+                  gender: m.gender,
+                  grade: m.grade,
+                  ageGroup: m.ageGroup,
+                  injuryLevel: "NONE",
+                  eloScore: m.eloScore ?? GRADE_BASE_ELO[m.grade],
+                  cockSubmitted: false,
+                  cockQuantity: 0,
+                  status: "ARRIVED",
+                  arrivalOrder: idx + 1,
+                  lastWaitStartedAt: baseTime + idx * 60000,
+                  totalGameCount: 0,
+                  consecutiveGameCount: 0,
+                  wins: 0,
+                  losses: 0,
+                }));
+
+              const syncedGuests: SessionPlayer[] = dbGuestList.map(
+                (g, gIdx) => ({
+                  id: g.id,
+                  name: g.name,
+                  nickname: g.name,
+                  isGuest: true,
+                  role: "MEMBER",
+                  gender: g.gender,
+                  grade: g.grade,
+                  ageGroup: g.ageGroup,
+                  injuryLevel: "NONE",
+                  eloScore: GRADE_BASE_ELO[g.grade],
+                  cockSubmitted: false,
+                  cockQuantity: 0,
+                  status: "ARRIVED",
+                  arrivalOrder: syncedMembers.length + gIdx + 1,
+                  lastWaitStartedAt:
+                    baseTime + (syncedMembers.length + gIdx) * 60000,
+                  totalGameCount: 0,
+                  consecutiveGameCount: 0,
+                  wins: 0,
+                  losses: 0,
+                })
+              );
+
+              return [...syncedMembers, ...syncedGuests];
+            }
+
+            // 이미 경기 진행 중이면 기존 선수 상태는 유지하되 누락된 게스트/회원만 추가
+            const existingIds = new Set(
+              prev.filter((p) => !p.isGuest && p.memberId).map((p) => p.memberId!)
+            );
+            const existingGuestNames = new Set(
+              prev.filter((p) => p.isGuest).map((p) => p.name)
+            );
+            const memberMap = new Map<number, MemberDto>();
+            clubMembers.forEach((m) => memberMap.set(m.id, m));
+
+            const additions: SessionPlayer[] = [];
+            targetIdSet.forEach((pid) => {
+              if (existingIds.has(pid)) return;
+              const m = memberMap.get(pid);
+              if (!m) return;
+              additions.push({
+                id: m.id,
+                memberId: m.id,
+                name: m.name,
+                nickname: m.nickname,
+                isGuest: false,
+                role: m.role,
+                gender: m.gender,
+                grade: m.grade,
+                ageGroup: m.ageGroup,
+                injuryLevel: "NONE",
+                eloScore: m.eloScore ?? GRADE_BASE_ELO[m.grade],
+                cockSubmitted: false,
+                cockQuantity: 0,
+                status: "ARRIVED",
+                arrivalOrder: prev.length + additions.length + 1,
+                lastWaitStartedAt: Date.now(),
+                totalGameCount: 0,
+                consecutiveGameCount: 0,
+                wins: 0,
+                losses: 0,
+              });
+            });
+
+            dbGuestList.forEach((g) => {
+              if (existingGuestNames.has(g.name)) return;
+              additions.push({
+                id: g.id,
+                name: g.name,
+                nickname: g.name,
+                isGuest: true,
+                role: "MEMBER",
+                gender: g.gender,
+                grade: g.grade,
+                ageGroup: g.ageGroup,
+                injuryLevel: "NONE",
+                eloScore: GRADE_BASE_ELO[g.grade],
+                cockSubmitted: false,
+                cockQuantity: 0,
+                status: "ARRIVED",
+                arrivalOrder: prev.length + additions.length + 1,
+                lastWaitStartedAt: Date.now(),
+                totalGameCount: 0,
+                consecutiveGameCount: 0,
+                wins: 0,
+                losses: 0,
+              });
+            });
+
+            return additions.length > 0 ? [...prev, ...additions] : prev;
+          });
+        }
+      )
+      .catch(() => {
+        // ignore
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [meetupId, clubMembers]);
 
   // PostgreSQL(dailyminton DB)에서 수정된 회원 성별·급수·연령대 실시간 동기화
   useEffect(() => {
@@ -1823,7 +2014,7 @@ function SessionMatchContent() {
         const listSaved = sessionStorage.getItem("dailyminton_meetups");
         const baseList = listSaved
           ? (JSON.parse(listSaved) as MeetupScheduleDto[])
-          : INITIAL_MEETUPS;
+          : [];
         if (Array.isArray(baseList)) {
           const nextList = baseList.map((m) =>
             m.id === meetupId
@@ -1843,6 +2034,19 @@ function SessionMatchContent() {
       } catch {
         // ignore
       }
+
+      fetch("/api/meetups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync_session_players",
+          meetupId,
+          participantIds: memberIds,
+          guests,
+        }),
+      }).catch(() => {
+        // ignore
+      });
     },
     [meetup, meetupId]
   );

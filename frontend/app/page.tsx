@@ -11,7 +11,6 @@ import { ProfileSection } from "@/components/features/home/ProfileSection";
 import {
   GRADE_BASE_ELO,
   getAvatarGradientByGender,
-  INITIAL_MEETUPS,
   INITIAL_MEMBERS,
 } from "@/data/membersData";
 import type {
@@ -34,7 +33,7 @@ export default function HomePage() {
         const saved = sessionStorage.getItem("dailyminton_meetups");
         if (saved) {
           const parsed = JSON.parse(saved) as MeetupScheduleDto[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
+          if (Array.isArray(parsed)) {
             return parsed;
           }
         }
@@ -42,7 +41,7 @@ export default function HomePage() {
         // ignore
       }
     }
-    return INITIAL_MEETUPS;
+    return [];
   });
   const [members, setMembers] = useState<MemberDto[]>(INITIAL_MEMBERS);
 
@@ -115,7 +114,39 @@ export default function HomePage() {
     };
   }, []);
 
-  // PostgreSQL(dailyminton DB) 실시간 회원 정보 동기화
+  // PostgreSQL(dailyminton/Supabase DB) 실시간 회원 및 정모 일정 동기화
+  const fetchMeetupsFromDb = useCallback(() => {
+    fetch("/api/meetups", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (
+          data: { source?: string; meetups?: MeetupScheduleDto[] } | null
+        ) => {
+          if (data?.source === "db" && Array.isArray(data.meetups)) {
+            const dbMeetups = data.meetups;
+            setMeetups(dbMeetups);
+            try {
+              sessionStorage.setItem(
+                "dailyminton_meetups",
+                JSON.stringify(dbMeetups)
+              );
+              dbMeetups.forEach((m) => {
+                sessionStorage.setItem(
+                  `dailyminton_meetup_${m.id}`,
+                  JSON.stringify(m)
+                );
+              });
+            } catch {
+              // ignore
+            }
+          }
+        }
+      )
+      .catch(() => {
+        // DB 연결 실패 시 로컬 상태 유지
+      });
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     fetch("/api/members", { cache: "no-store" })
@@ -145,20 +176,52 @@ export default function HomePage() {
       .catch(() => {
         // DB 연결 실패 시 기본 시드 유지
       });
+
+    fetchMeetupsFromDb();
+
+    const handleFocusRefresh = () => {
+      fetchMeetupsFromDb();
+    };
+    window.addEventListener("focus", handleFocusRefresh);
+
     return () => {
       isMounted = false;
+      window.removeEventListener("focus", handleFocusRefresh);
     };
-  }, []);
+  }, [fetchMeetupsFromDb]);
 
   const handleAddMeetup = useCallback(
     (newMeetup: Omit<MeetupScheduleDto, "id">) => {
+      const tempId = Date.now();
       updateMeetupsWithStorage((prev) => [
         ...prev,
         {
           ...newMeetup,
-          id: Date.now(),
+          id: tempId,
         },
       ]);
+
+      fetch("/api/meetups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newMeetup),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then(
+          (
+            data: { success?: boolean; meetup?: MeetupScheduleDto } | null
+          ) => {
+            if (data?.success && data.meetup) {
+              const savedMeetup = data.meetup;
+              updateMeetupsWithStorage((prev) =>
+                prev.map((m) => (m.id === tempId ? savedMeetup : m))
+              );
+            }
+          }
+        )
+        .catch(() => {
+          // ignore
+        });
     },
     [updateMeetupsWithStorage]
   );
@@ -195,22 +258,37 @@ export default function HomePage() {
           return nextMeetup;
         })
       );
+
+      fetch("/api/meetups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_info",
+          meetupId,
+          ...updated,
+        }),
+      }).catch(() => {
+        // ignore
+      });
     },
     [updateMeetupsWithStorage]
   );
 
   const handleToggleJoin = useCallback(
     (meetupId: number) => {
+      const myMemberId = 3; // 기본 로그인 사용자(한태호)
+      let toggled = false;
+
       updateMeetupsWithStorage((prev) =>
         prev.map((m) => {
           if (m.id !== meetupId) return m;
           const currentIds = m.participantIds || [];
           const guestCount = m.guests?.length || 0;
-          const myMemberId = 3; // 기본 로그인 사용자(한태호)
           const alreadyIn = currentIds.includes(myMemberId);
 
           let nextMeetup: MeetupScheduleDto;
           if (m.isJoined || alreadyIn) {
+            toggled = true;
             const nextIds = currentIds.filter((id) => id !== myMemberId);
             nextMeetup = {
               ...m,
@@ -221,6 +299,7 @@ export default function HomePage() {
             };
           } else {
             if (currentIds.length + guestCount >= m.maxParticipants) return m;
+            toggled = true;
             const nextIds = [...currentIds, myMemberId];
             nextMeetup = {
               ...m,
@@ -244,6 +323,20 @@ export default function HomePage() {
           return nextMeetup;
         })
       );
+
+      if (toggled) {
+        fetch("/api/meetups", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "toggle_member",
+            meetupId,
+            memberId: myMemberId,
+          }),
+        }).catch(() => {
+          // ignore
+        });
+      }
     },
     [updateMeetupsWithStorage]
   );
@@ -251,6 +344,8 @@ export default function HomePage() {
   // 정모 참가자 현황 모달에서 특정 회원의 참가 신청/취소 토글
   const handleToggleMemberParticipation = useCallback(
     (meetupId: number, memberId: number) => {
+      let toggled = false;
+
       updateMeetupsWithStorage((prev) =>
         prev.map((m) => {
           if (m.id !== meetupId) return m;
@@ -261,6 +356,7 @@ export default function HomePage() {
             return m;
           }
 
+          toggled = true;
           const nextIds = exists
             ? currentIds.filter((id) => id !== memberId)
             : [...currentIds, memberId];
@@ -281,6 +377,20 @@ export default function HomePage() {
           return nextMeetup;
         })
       );
+
+      if (toggled) {
+        fetch("/api/meetups", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "toggle_member",
+            meetupId,
+            memberId,
+          }),
+        }).catch(() => {
+          // ignore
+        });
+      }
     },
     [updateMeetupsWithStorage]
   );
@@ -309,6 +419,18 @@ export default function HomePage() {
           return nextMeetup;
         })
       );
+
+      fetch("/api/meetups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "remove_guest",
+          meetupId,
+          guestId,
+        }),
+      }).catch(() => {
+        // ignore
+      });
     },
     [updateMeetupsWithStorage]
   );
@@ -341,6 +463,16 @@ export default function HomePage() {
   const handleDeleteMeetup = useCallback(
     (meetupId: number) => {
       updateMeetupsWithStorage((prev) => prev.filter((m) => m.id !== meetupId));
+      try {
+        sessionStorage.removeItem(`dailyminton_meetup_${meetupId}`);
+      } catch {
+        // ignore
+      }
+      fetch(`/api/meetups?id=${meetupId}`, {
+        method: "DELETE",
+      }).catch(() => {
+        // ignore
+      });
     },
     [updateMeetupsWithStorage]
   );

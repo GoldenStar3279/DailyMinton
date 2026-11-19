@@ -94,8 +94,13 @@ export async function GET() {
 
     return NextResponse.json(mapped);
   } catch (err) {
-    console.error("[GET /api/members] DB error:", err);
-    return NextResponse.json([]);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[GET /api/members] DB error:", errMsg);
+    return NextResponse.json([], {
+      headers: {
+        "X-DB-Error": errMsg.slice(0, 150),
+      },
+    });
   }
 }
 

@@ -29,8 +29,8 @@ const PlayerBlockComponent: React.FC<PlayerBlockProps> = ({
   return (
     <div
       onClick={onClick}
-      className={`group relative flex items-center justify-between gap-2.5 rounded-xl border transition ${
-        compact ? "px-3 py-2" : "px-3.5 py-3"
+      className={`group relative flex flex-wrap items-center justify-between gap-2 rounded-xl border transition sm:flex-nowrap sm:gap-2.5 ${
+        compact ? "px-3 py-2" : "px-3 py-2.5 sm:px-3.5 sm:py-3"
       } ${onClick ? "cursor-pointer" : ""} ${
         selected
           ? "border-amber-400 bg-amber-400/20 ring-2 ring-amber-400/50"
@@ -115,7 +115,7 @@ const PlayerBlockComponent: React.FC<PlayerBlockProps> = ({
 
       {actions && (
         <div
-          className="flex shrink-0 items-center gap-1.5"
+          className="ml-auto flex shrink-0 flex-wrap items-center gap-1.5"
           onClick={(e) => e.stopPropagation()}
         >
           {actions}

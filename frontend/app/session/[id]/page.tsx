@@ -2218,24 +2218,29 @@ function SessionMatchContent() {
     <div className="min-h-screen overflow-x-hidden bg-[#0d0f14] text-zinc-100">
       {/* 상단 운영 헤더 */}
       <header className="sticky top-0 z-20 border-b border-zinc-800/80 bg-[#0d0f14]/95 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition hover:border-zinc-700 hover:text-white"
-            >
-              ← 홈으로
-            </Link>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold text-white sm:text-xl">
+        <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-6 sm:py-3.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <div className="flex items-center justify-between gap-2">
+              <Link
+                href="/"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition hover:border-zinc-700 hover:text-white"
+              >
+                ← 홈으로
+              </Link>
+              <span className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-bold text-emerald-300 ring-1 ring-emerald-500/40 sm:hidden">
+                LIVE 운영중
+              </span>
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="min-w-0 break-words text-base font-bold text-white sm:text-xl">
                   {meetup.title} 경기 진행 현황판
                 </h1>
-                <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-bold text-emerald-300 ring-1 ring-emerald-500/40">
+                <span className="hidden shrink-0 items-center whitespace-nowrap rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-bold text-emerald-300 ring-1 ring-emerald-500/40 sm:inline-flex">
                   LIVE 운영중
                 </span>
               </div>
-              <p className="text-xs text-zinc-400">
+              <p className="mt-0.5 break-words text-xs text-zinc-400">
                 {meetup.location} · {meetup.dateTimeText} · {meetup.feeText}
               </p>
             </div>

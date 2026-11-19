@@ -11,7 +11,6 @@ import { ProfileSection } from "@/components/features/home/ProfileSection";
 import {
   GRADE_BASE_ELO,
   getAvatarGradientByGender,
-  INITIAL_MEMBERS,
 } from "@/data/membersData";
 import type {
   AgeGroup,
@@ -43,7 +42,7 @@ export default function HomePage() {
     }
     return [];
   });
-  const [members, setMembers] = useState<MemberDto[]>(INITIAL_MEMBERS);
+  const [members, setMembers] = useState<MemberDto[]>([]);
 
   // 신입 회원 추가 모달 상태
   const [isNewMemberModalOpen, setIsNewMemberModalOpen] = useState(false);

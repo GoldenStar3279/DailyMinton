@@ -2,7 +2,6 @@ import { connection, NextResponse } from "next/server";
 import {
   GRADE_BASE_ELO,
   getAvatarGradientByGender,
-  INITIAL_MEMBERS,
 } from "@/data/membersData";
 import { getDbPool } from "@/lib/db";
 import type {
@@ -51,7 +50,7 @@ export async function GET() {
     );
 
     if (!Array.isArray(rows) || rows.length === 0) {
-      return NextResponse.json(INITIAL_MEMBERS);
+      return NextResponse.json([]);
     }
 
     const mapped: MemberDto[] = rows.map((row) => {
@@ -87,8 +86,9 @@ export async function GET() {
     });
 
     return NextResponse.json(mapped);
-  } catch {
-    return NextResponse.json(INITIAL_MEMBERS);
+  } catch (err) {
+    console.error("[GET /api/members] DB error:", err);
+    return NextResponse.json([]);
   }
 }
 

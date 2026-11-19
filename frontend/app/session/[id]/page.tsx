@@ -17,7 +17,6 @@ import {
   GRADE_BASE_ELO,
   GRADE_SORT_ORDER,
   getAvatarGradientByGender,
-  INITIAL_MEMBERS,
 } from "@/data/membersData";
 import type {
   AgeGroup,
@@ -105,66 +104,28 @@ function buildCourtsFromMeetup(meetup: MeetupScheduleDto): CourtInfo[] {
 
 function createInitialSessionPlayers(meetup: MeetupScheduleDto): SessionPlayer[] {
   const baseTime = Date.now() - 3600 * 1000;
-  const participantIds =
-    meetup.participantIds && meetup.participantIds.length > 0
-      ? meetup.participantIds
-      : INITIAL_MEMBERS.slice(0, 16).map((m) => m.id);
 
-  const memberMap = new Map<number, MemberDto>();
-  INITIAL_MEMBERS.forEach((m) => memberMap.set(m.id, m));
-
-  const targetMembers = participantIds
-    .map((id) => memberMap.get(id))
-    .filter((m): m is MemberDto => m !== undefined);
-
-  const memberPlayers: SessionPlayer[] = targetMembers.map((member, idx) => ({
-    id: member.id,
-    memberId: member.id,
-    name: member.name,
-    nickname: member.nickname,
-    isGuest: false,
-    role: member.role,
-    gender: member.gender,
-    grade: member.grade,
-    ageGroup: member.ageGroup,
+  return (meetup.guests || []).map((guest, gIdx) => ({
+    id: guest.id,
+    name: guest.name,
+    nickname: guest.name,
+    isGuest: true,
+    role: "MEMBER",
+    gender: guest.gender,
+    grade: guest.grade,
+    ageGroup: guest.ageGroup,
     injuryLevel: "NONE",
-    eloScore: GRADE_BASE_ELO[member.grade],
+    eloScore: GRADE_BASE_ELO[guest.grade],
     cockSubmitted: false,
     cockQuantity: 0,
     status: "ARRIVED",
-    arrivalOrder: idx + 1,
-    lastWaitStartedAt: baseTime + idx * 60000,
+    arrivalOrder: gIdx + 1,
+    lastWaitStartedAt: baseTime + gIdx * 60000,
     totalGameCount: 0,
     consecutiveGameCount: 0,
     wins: 0,
     losses: 0,
   }));
-
-  const guestPlayers: SessionPlayer[] = (meetup.guests || []).map(
-    (guest, gIdx) => ({
-      id: guest.id,
-      name: guest.name,
-      nickname: guest.name,
-      isGuest: true,
-      role: "MEMBER",
-      gender: guest.gender,
-      grade: guest.grade,
-      ageGroup: guest.ageGroup,
-      injuryLevel: "NONE",
-      eloScore: GRADE_BASE_ELO[guest.grade],
-      cockSubmitted: false,
-      cockQuantity: 0,
-      status: "ARRIVED",
-      arrivalOrder: memberPlayers.length + gIdx + 1,
-      lastWaitStartedAt: baseTime + (memberPlayers.length + gIdx) * 60000,
-      totalGameCount: 0,
-      consecutiveGameCount: 0,
-      wins: 0,
-      losses: 0,
-    })
-  );
-
-  return [...memberPlayers, ...guestPlayers];
 }
 
 function resolveInitialMeetup(meetupId: number): MeetupScheduleDto {
@@ -266,7 +227,7 @@ function SessionMatchContent() {
   const [players, setPlayers] = useState<SessionPlayer[]>(() =>
     createInitialSessionPlayers(meetup)
   );
-  const [clubMembers, setClubMembers] = useState<MemberDto[]>(INITIAL_MEMBERS);
+  const [clubMembers, setClubMembers] = useState<MemberDto[]>([]);
   const [isAdmin, setIsAdmin] = useState<boolean>(
     () => searchParams.get("role") !== "member"
   );

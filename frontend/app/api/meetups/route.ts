@@ -464,16 +464,23 @@ export async function PATCH(request: Request) {
                 .filter((id) => Number.isInteger(id) && id > 0)
             )
           );
-          await client.query(
-            `
-            DELETE FROM session_participants
-            WHERE session_id = $1
-              AND participant_type = 'MEMBER'
-              AND NOT (member_id = ANY($2::bigint[]));
-            `,
-            [meetupId, validMemberIds]
-          );
-          await insertMemberParticipants(client, meetupId, validMemberIds);
+          if (validMemberIds.length === 0) {
+            await client.query(
+              "DELETE FROM session_participants WHERE session_id = $1 AND participant_type = 'MEMBER';",
+              [meetupId]
+            );
+          } else {
+            await client.query(
+              `
+              DELETE FROM session_participants
+              WHERE session_id = $1
+                AND participant_type = 'MEMBER'
+                AND NOT (member_id = ANY($2::bigint[]));
+              `,
+              [meetupId, validMemberIds]
+            );
+            await insertMemberParticipants(client, meetupId, validMemberIds);
+          }
         }
 
         if (Array.isArray(body.guests)) {

@@ -27,7 +27,15 @@
 }
 
 html {
-  font-size: 16.5px;
+  font-size: 14px;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+@media (min-width: 481px) {
+  html {
+    font-size: 16px;
+  }
 }
 
 @media (min-width: 768px) {
@@ -47,6 +55,8 @@ body {
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
     "Pretendard", "Malgun Gothic", sans-serif;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 dialog::backdrop {

@@ -8,6 +8,7 @@ import type {
   AgeGroup,
   Gender,
   Grade,
+  InjuryLevel,
   MemberDto,
   MemberRole,
 } from "@/types/home";
@@ -20,6 +21,7 @@ interface DbMemberRow {
   gender: Gender;
   grade: Grade;
   age_group: AgeGroup;
+  injury_level: InjuryLevel | null;
   elo_score: number;
   joined_at: string;
 }
@@ -41,6 +43,7 @@ export async function GET() {
         gender,
         grade,
         age_group,
+        injury_level,
         elo_score,
         to_char(joined_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS joined_at
       FROM members
@@ -78,6 +81,10 @@ export async function GET() {
         ageGroup: row.age_group,
         bio: defaultBio,
         joinedAt: row.joined_at,
+        injuryLevel:
+          row.injury_level === "MILD" || row.injury_level === "SEVERE"
+            ? row.injury_level
+            : "NONE",
         eloScore: Number(row.elo_score) || GRADE_BASE_ELO[row.grade],
         avatarGradient: getAvatarGradientByGender(row.gender, uiRole),
         avatarEmoji:
@@ -189,6 +196,7 @@ export async function PATCH(request: Request) {
       gender?: Gender;
       grade?: Grade;
       ageGroup?: AgeGroup;
+      injuryLevel?: InjuryLevel;
       eloScore?: number;
       eloUpdates?: Array<{ memberId: number; eloScore: number }>;
     };
@@ -263,6 +271,13 @@ export async function PATCH(request: Request) {
     }
     if (body.ageGroup) {
       pushParam("age_group", body.ageGroup);
+    }
+    if (
+      body.injuryLevel === "NONE" ||
+      body.injuryLevel === "MILD" ||
+      body.injuryLevel === "SEVERE"
+    ) {
+      pushParam("injury_level", body.injuryLevel);
     }
     if (typeof body.eloScore === "number" && Number.isFinite(body.eloScore)) {
       pushParam("elo_score", Math.max(800, Math.round(body.eloScore)));

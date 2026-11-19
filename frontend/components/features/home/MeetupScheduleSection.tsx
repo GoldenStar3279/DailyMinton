@@ -288,10 +288,10 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
           return (
             <li
               key={meetup.id}
-              className="group flex items-start gap-4 rounded-xl border border-zinc-800/80 bg-[#151821] p-3.5 transition hover:border-zinc-700 hover:bg-[#191d28]"
+              className="group flex items-start gap-3 rounded-xl border border-zinc-800/80 bg-[#151821] p-3 transition hover:border-zinc-700 hover:bg-[#191d28] sm:gap-4 sm:p-3.5"
             >
               {/* 좌측 썸네일 배너 */}
-              <div className="relative h-[94px] w-[74px] shrink-0 overflow-hidden rounded-lg border border-zinc-700/70 select-none">
+              <div className="relative h-[80px] w-[62px] shrink-0 overflow-hidden rounded-lg border border-zinc-700/70 select-none sm:h-[94px] sm:w-[74px]">
                 {meetup.thumbnailTheme === "gymWindow" ? (
                   <div className="flex h-full w-full flex-col justify-between bg-[#c9cbc3]">
                     <div className="grid h-6 grid-cols-2 gap-1 px-1.5 pt-1.5">
@@ -322,79 +322,80 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
               </div>
 
               {/* 우측 정모 상세 정보 */}
-              <div className="min-w-0 flex-1 pt-0.5">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <h3 className="truncate text-[15px] font-bold text-zinc-100">
-                    {meetup.title}
-                  </h3>
+              <div className="min-w-0 flex-1 overflow-hidden pt-0.5">
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <h3 className="min-w-0 break-words text-[15px] font-bold text-zinc-100">
+                      {meetup.title}
+                    </h3>
 
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onStartMatchSession(meetup)}
-                      className="inline-flex items-center gap-1 rounded-md bg-emerald-500/90 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-500"
-                    >
-                      경기 진행
-                    </button>
+                    <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => onStartMatchSession(meetup)}
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-emerald-500/90 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-500"
+                      >
+                        경기 진행
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() => onToggleJoin(meetup.id)}
-                      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
-                        meetup.isJoined
-                          ? "bg-blue-500/20 text-blue-300 ring-1 ring-blue-400/40 hover:bg-blue-500/30"
+                      <button
+                        type="button"
+                        onClick={() => onToggleJoin(meetup.id)}
+                        className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-semibold transition ${meetup.isJoined
+                            ? "bg-blue-500/20 text-blue-300 ring-1 ring-blue-400/40 hover:bg-blue-500/30"
+                            : isFull
+                              ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
+                              : "border border-zinc-700 bg-zinc-800/80 text-zinc-200 hover:border-zinc-600 hover:bg-zinc-700"
+                          }`}
+                      >
+                        {meetup.isJoined
+                          ? "참가중 (취소)"
                           : isFull
-                            ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
-                            : "border border-zinc-700 bg-zinc-800/80 text-zinc-200 hover:border-zinc-600 hover:bg-zinc-700"
-                      }`}
-                    >
-                      {meetup.isJoined
-                        ? "참가중 (취소)"
-                        : isFull
-                          ? "마감"
-                          : "참가"}
-                    </button>
+                            ? "마감"
+                            : "참가"}
+                      </button>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setParticipantSearch("");
-                        setViewingParticipantsMeetupId(meetup.id);
-                      }}
-                      className="inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-semibold text-zinc-200 transition hover:border-[#5a9cf8] hover:text-white"
-                    >
-                      👥 참가자 현황 ({currentCount}/{meetup.maxParticipants})
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setParticipantSearch("");
+                          setViewingParticipantsMeetupId(meetup.id);
+                        }}
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-semibold text-zinc-200 transition hover:border-[#5a9cf8] hover:text-white"
+                      >
+                        👥 참가자 현황 ({currentCount}/{meetup.maxParticipants})
+                      </button>
 
-                    {isAdmin && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditModal(meetup)}
-                          className="rounded-md border border-zinc-700 bg-zinc-800/90 px-2.5 py-1 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-700 hover:text-white"
-                        >
-                          수정
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteMeetup(meetup.id)}
-                          aria-label={`${meetup.title} 정모 삭제`}
-                          className="rounded-md p-1 text-zinc-500 transition hover:bg-red-500/15 hover:text-red-400"
-                          title="정모 삭제"
-                        >
-                          <svg
-                            aria-hidden="true"
-                            className="h-4 w-4"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
+                      {isAdmin && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(meetup)}
+                            className="whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-800/90 px-2.5 py-1 text-xs font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-700 hover:text-white"
                           >
-                            <path d="M3 6h18M8 6V4h8v2m-9 0v13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6" />
-                          </svg>
-                        </button>
-                      </>
-                    )}
+                            수정
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteMeetup(meetup.id)}
+                            aria-label={`${meetup.title} 정모 삭제`}
+                            className="rounded-md p-1 text-zinc-500 transition hover:bg-red-500/15 hover:text-red-400"
+                            title="정모 삭제"
+                          >
+                            <svg
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path d="M3 6h18M8 6V4h8v2m-9 0v13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6" />
+                            </svg>
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -458,7 +459,7 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
       >
         {viewingMeetup && (
           <div className="space-y-5 text-sm">
-            {/* 남/여 참가 인원 요약 (정식회원 + 게스트 합산) */}
+            {/* 남/여 참가 인원 요약 (회원 + 게스트 합산) */}
             <div className="grid grid-cols-3 gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-center">
               <div>
                 <div className="text-xs font-medium text-zinc-400">
@@ -499,9 +500,8 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
             </div>
 
             <div
-              className={`grid grid-cols-1 gap-5 ${
-                isAdmin ? "lg:grid-cols-2" : ""
-              }`}
+              className={`grid grid-cols-1 gap-5 ${isAdmin ? "lg:grid-cols-2" : ""
+                }`}
             >
               {/* 현재 참가 신청한 멤버 + 게스트 리스트 */}
               <div className="flex flex-col rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-4">
@@ -520,11 +520,10 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
                       return (
                         <li
                           key={`member-${m.id}`}
-                          className={`flex items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-sm ${
-                            isFemale
+                          className={`flex items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-sm ${isFemale
                               ? "border-pink-400/35 bg-pink-500/15"
                               : "border-sky-400/35 bg-sky-500/15"
-                          }`}
+                            }`}
                         >
                           <div className="flex min-w-0 flex-wrap items-center gap-2">
                             <span className="font-mono text-xs text-zinc-400">
@@ -568,11 +567,10 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
                       return (
                         <li
                           key={`guest-${g.id}`}
-                          className={`flex items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-sm ${
-                            isFemale
+                          className={`flex items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-sm ${isFemale
                               ? "border-pink-400/35 bg-pink-500/15"
                               : "border-sky-400/35 bg-sky-500/15"
-                          }`}
+                            }`}
                         >
                           <div className="flex min-w-0 flex-wrap items-center gap-2">
                             <span className="font-mono text-xs text-zinc-400">
@@ -842,11 +840,10 @@ const MeetupScheduleSectionComponent: React.FC<MeetupScheduleSectionProps> = ({
                       key={courtNum}
                       type="button"
                       onClick={() => handleTogglePlannedCourt(courtNum)}
-                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold transition ${
-                        isPlanned
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold transition ${isPlanned
                           ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-300"
                           : "border-zinc-800 bg-zinc-900 text-zinc-500 hover:text-zinc-300"
-                      }`}
+                        }`}
                     >
                       {courtNum}번 {isPlanned ? "사용예정" : "미사용"}
                     </button>

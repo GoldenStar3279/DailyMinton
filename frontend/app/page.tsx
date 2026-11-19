@@ -16,6 +16,7 @@ import type {
   AgeGroup,
   Gender,
   Grade,
+  InjuryLevel,
   MeetupScheduleDto,
   MemberDto,
 } from "@/types/home";
@@ -72,7 +73,7 @@ export default function HomePage() {
     []
   );
 
-  // 경기 진행 현황판 등에서 변경된 정모 참가자(정식회원 + 게스트) 및 최종 ELO 점수를 홈 화면 복귀 시 즉시 동기화
+  // 경기 진행 현황판 등에서 변경된 정모 참가자(회원 + 게스트) 및 최종 ELO 점수를 홈 화면 복귀 시 즉시 동기화
   useEffect(() => {
     const syncFromStorage = () => {
       try {
@@ -276,7 +277,7 @@ export default function HomePage() {
   const handleToggleJoin = useCallback(
     (meetupId: number) => {
       const myMemberId = 3; // 기본 로그인 사용자(한태호)
-      let toggled = false;
+      let syncedNextIds: number[] | null = null;
 
       updateMeetupsWithStorage((prev) =>
         prev.map((m) => {
@@ -287,8 +288,8 @@ export default function HomePage() {
 
           let nextMeetup: MeetupScheduleDto;
           if (m.isJoined || alreadyIn) {
-            toggled = true;
             const nextIds = currentIds.filter((id) => id !== myMemberId);
+            syncedNextIds = nextIds;
             nextMeetup = {
               ...m,
               isJoined: false,
@@ -298,8 +299,8 @@ export default function HomePage() {
             };
           } else {
             if (currentIds.length + guestCount >= m.maxParticipants) return m;
-            toggled = true;
             const nextIds = [...currentIds, myMemberId];
+            syncedNextIds = nextIds;
             nextMeetup = {
               ...m,
               isJoined: true,
@@ -323,14 +324,15 @@ export default function HomePage() {
         })
       );
 
-      if (toggled) {
+      if (syncedNextIds !== null) {
         fetch("/api/meetups", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
+          keepalive: true,
           body: JSON.stringify({
-            action: "toggle_member",
+            action: "sync_session_players",
             meetupId,
-            memberId: myMemberId,
+            participantIds: syncedNextIds,
           }),
         }).catch(() => {
           // ignore
@@ -343,7 +345,7 @@ export default function HomePage() {
   // 정모 참가자 현황 모달에서 특정 회원의 참가 신청/취소 토글
   const handleToggleMemberParticipation = useCallback(
     (meetupId: number, memberId: number) => {
-      let toggled = false;
+      let syncedNextIds: number[] | null = null;
 
       updateMeetupsWithStorage((prev) =>
         prev.map((m) => {
@@ -355,10 +357,10 @@ export default function HomePage() {
             return m;
           }
 
-          toggled = true;
           const nextIds = exists
             ? currentIds.filter((id) => id !== memberId)
             : [...currentIds, memberId];
+          syncedNextIds = nextIds;
 
           const nextMeetup: MeetupScheduleDto = {
             ...m,
@@ -377,14 +379,15 @@ export default function HomePage() {
         })
       );
 
-      if (toggled) {
+      if (syncedNextIds !== null) {
         fetch("/api/meetups", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
+          keepalive: true,
           body: JSON.stringify({
-            action: "toggle_member",
+            action: "sync_session_players",
             meetupId,
-            memberId,
+            participantIds: syncedNextIds,
           }),
         }).catch(() => {
           // ignore
@@ -444,6 +447,21 @@ export default function HomePage() {
       } catch {
         // ignore
       }
+
+      // 경기 진행 화면 이동 직전 현재 참가자 명단을 DB에 한 번 더 확실히 동기화
+      fetch("/api/meetups", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({
+          action: "sync_session_players",
+          meetupId: meetup.id,
+          participantIds: meetup.participantIds || [],
+        }),
+      }).catch(() => {
+        // ignore
+      });
+
       const query = new URLSearchParams({
         title: meetup.title,
         date: meetup.dateTimeText,
@@ -483,10 +501,10 @@ export default function HomePage() {
         prev.map((m) =>
           m.id === memberId
             ? {
-                ...m,
-                role: nextRole,
-                avatarEmoji: nextRole === "ADMIN" ? "🔥" : "🏸",
-              }
+              ...m,
+              role: nextRole,
+              avatarEmoji: nextRole === "ADMIN" ? "🔥" : "🏸",
+            }
             : m
         )
       );
@@ -512,6 +530,7 @@ export default function HomePage() {
         gender?: Gender;
         grade?: Grade;
         ageGroup?: AgeGroup;
+        injuryLevel?: InjuryLevel;
         bio?: string;
       }
     ) => {
@@ -666,23 +685,22 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#0d0f14] text-zinc-100">
-      {/* 상단 탭 바 (운영진: 홈/랭킹/회원관리/프로필, 일반회원: 홈/랭킹/프로필) */}
+      {/* 상단 탭 바 (모바일 375px에서는 2줄로 깔끔하게 분리, PC에서는 1줄 정렬) */}
       <header className="sticky top-0 z-20 border-b border-zinc-800/80 bg-[#0d0f14]/95 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-[960px] items-center justify-between gap-2 px-4 sm:px-6">
-          <nav aria-label="모임 메뉴">
-            <ul className="flex items-center gap-6 sm:gap-8">
+        <div className="mx-auto flex max-w-[960px] flex-col-reverse gap-1 px-3 pt-2 sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:px-6 sm:pt-0">
+          <nav aria-label="모임 메뉴" className="w-full sm:w-auto">
+            <ul className="flex items-center justify-between gap-2 sm:justify-start sm:gap-8">
               {visibleTabs.map((tab) => {
                 const isActive = activeTab === tab;
                 return (
-                  <li key={tab}>
+                  <li key={tab} className="shrink-0">
                     <button
                       type="button"
                       onClick={() => setActiveTab(tab)}
-                      className={`relative py-4 text-[15px] transition-colors ${
-                        isActive
+                      className={`relative whitespace-nowrap px-1 py-2.5 text-sm transition-colors sm:px-0 sm:py-4 sm:text-[15px] ${isActive
                           ? "font-bold text-white"
                           : "font-medium text-zinc-400 hover:text-zinc-200"
-                      }`}
+                        }`}
                     >
                       {tab}
                       {isActive && (
@@ -695,13 +713,13 @@ export default function HomePage() {
             </ul>
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex w-full items-center justify-end gap-1.5 sm:w-auto sm:gap-2">
             {/* 모임장 및 운영진에게만 신입 회원 추가 버튼 노출 (일반회원에게는 숨김) */}
             {isAdmin && (
               <button
                 type="button"
                 onClick={() => setIsNewMemberModalOpen(true)}
-                className="inline-flex items-center gap-1 rounded-lg bg-[#5a9cf8] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#488be8]"
+                className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg bg-[#5a9cf8] px-2.5 py-1.5 text-xs font-bold text-white transition hover:bg-[#488be8] sm:px-3"
               >
                 + 신입 회원 추가
               </button>
@@ -710,16 +728,14 @@ export default function HomePage() {
             <button
               type="button"
               onClick={handleToggleRoleMode}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                isAdmin
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${isAdmin
                   ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
                   : "border-zinc-700 bg-zinc-800 text-zinc-400"
-              }`}
+                }`}
             >
               <span
-                className={`h-2 w-2 rounded-full ${
-                  isAdmin ? "bg-amber-400" : "bg-zinc-500"
-                }`}
+                className={`h-2 w-2 rounded-full ${isAdmin ? "bg-amber-400" : "bg-zinc-500"
+                  }`}
               />
               {isAdmin ? "운영진 권한" : "일반회원 권한"}
             </button>
@@ -785,11 +801,10 @@ export default function HomePage() {
                   >
                     <div className="flex items-center gap-3.5">
                       <span
-                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                          index < 3
+                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${index < 3
                             ? "bg-amber-400/20 text-amber-300 ring-1 ring-amber-400/40"
                             : "bg-zinc-800 text-zinc-400"
-                        }`}
+                          }`}
                       >
                         {index + 1}
                       </span>

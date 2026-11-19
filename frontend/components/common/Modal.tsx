@@ -84,11 +84,11 @@ const ModalComponent: React.FC<ModalProps> = ({
       ref={dialogRef}
       {...({ closedby: "any" } as React.DialogHTMLAttributes<HTMLDialogElement>)}
       aria-labelledby={titleId}
-      className={`m-auto w-[calc(100%-2rem)] ${MODAL_SIZE_CLASS[size]} rounded-2xl border border-zinc-800 bg-[#161922] p-0 text-zinc-100 shadow-2xl`}
+      className={`m-auto max-h-[90dvh] w-[calc(100%-1.5rem)] ${MODAL_SIZE_CLASS[size]} overflow-x-hidden overflow-y-auto rounded-2xl border border-zinc-800 bg-[#161922] p-0 text-zinc-100 shadow-2xl`}
     >
-      <div className="p-6">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 id={titleId} className="text-lg font-bold tracking-tight text-white">
+      <div className="p-4 sm:p-6">
+        <div className="mb-4 flex items-start justify-between gap-2 sm:mb-5">
+          <h2 id={titleId} className="min-w-0 break-words text-base font-bold tracking-tight text-white sm:text-lg">
             {title}
           </h2>
           <button

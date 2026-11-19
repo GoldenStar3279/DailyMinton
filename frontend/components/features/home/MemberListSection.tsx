@@ -144,7 +144,7 @@ const MemberListSectionComponent: React.FC<MemberListSectionProps> = ({
             return (
               <li
                 key={member.id}
-                className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 transition ${
+                className={`flex flex-col gap-2.5 rounded-xl border px-3.5 py-2.5 transition sm:flex-row sm:items-center sm:justify-between ${
                   isFemale
                     ? "border-pink-400/35 bg-pink-500/12 hover:border-pink-400/55 hover:bg-pink-500/18"
                     : "border-sky-400/30 bg-sky-500/10 hover:border-sky-400/50 hover:bg-sky-500/15"
@@ -191,7 +191,7 @@ const MemberListSectionComponent: React.FC<MemberListSectionProps> = ({
 
                       {(isLeader || isStaff) && (
                         <span
-                          className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
+                          className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold ${
                             isLeader
                               ? "bg-amber-400/20 text-amber-300 ring-1 ring-amber-400/30"
                               : "bg-rose-400/20 text-rose-300 ring-1 ring-rose-400/30"
@@ -207,7 +207,7 @@ const MemberListSectionComponent: React.FC<MemberListSectionProps> = ({
                         ageGroup={member.ageGroup}
                       />
 
-                      <span className="text-[11px] text-zinc-400">
+                      <span className="whitespace-nowrap text-[11px] text-zinc-400">
                         {member.joinedAt} 가입
                       </span>
                     </div>
@@ -220,12 +220,12 @@ const MemberListSectionComponent: React.FC<MemberListSectionProps> = ({
 
                 {/* 우측 모임장 전용 운영진 권한 부여/회수 + 강퇴 버튼 */}
                 {isLeaderView && !isLeader && (
-                  <div className="flex shrink-0 items-center gap-1.5">
+                  <div className="flex shrink-0 items-center justify-end gap-1.5 pl-14 sm:pl-0">
                     {isStaff ? (
                       <button
                         type="button"
                         onClick={() => onToggleStaffRole(member.id, "MEMBER")}
-                        className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/30"
+                        className="whitespace-nowrap rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/30"
                       >
                         운영진 회수
                       </button>
@@ -233,7 +233,7 @@ const MemberListSectionComponent: React.FC<MemberListSectionProps> = ({
                       <button
                         type="button"
                         onClick={() => onToggleStaffRole(member.id, "ADMIN")}
-                        className="rounded-lg border border-amber-400/40 bg-amber-500/20 px-2.5 py-1.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/35"
+                        className="whitespace-nowrap rounded-lg border border-amber-400/40 bg-amber-500/20 px-2.5 py-1.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/35"
                       >
                         + 운영진 부여
                       </button>
@@ -242,7 +242,7 @@ const MemberListSectionComponent: React.FC<MemberListSectionProps> = ({
                     <button
                       type="button"
                       onClick={() => onKickMember(member.id, member.name)}
-                      className="rounded-lg border border-red-500/40 bg-red-500/20 px-2.5 py-1.5 text-xs font-bold text-red-200 transition hover:bg-red-500/35"
+                      className="whitespace-nowrap rounded-lg border border-red-500/40 bg-red-500/20 px-2.5 py-1.5 text-xs font-bold text-red-200 transition hover:bg-red-500/35"
                     >
                       강퇴
                     </button>

@@ -106,7 +106,7 @@ function createInitialSessionPlayers(meetup: MeetupScheduleDto): SessionPlayer[]
   const baseTime = Date.now() - 3600 * 1000;
 
   return (meetup.guests || []).map((guest, gIdx) => ({
-    id: guest.id,
+    id: guest.id < 1_000_000_000 ? 1_000_000_000 + guest.id : guest.id,
     name: guest.name,
     nickname: guest.name,
     isGuest: true,
@@ -196,20 +196,20 @@ function SessionMatchContent() {
       ? dbMeetup.plannedCourts || [1, 2, 3, 4]
       : qPlanned !== null
         ? qPlanned
-            .split(",")
-            .map((s) => Number(s.trim()))
-            .filter(
-              (n) => Number.isInteger(n) && n >= 1 && n <= availableCourtCount
-            )
+          .split(",")
+          .map((s) => Number(s.trim()))
+          .filter(
+            (n) => Number.isInteger(n) && n >= 1 && n <= availableCourtCount
+          )
         : base.plannedCourts || [1, 2, 3, 4];
 
     const participantIds = dbMeetup
       ? dbMeetup.participantIds
       : qParticipants !== null && qParticipants.trim().length > 0
         ? qParticipants
-            .split(",")
-            .map((s) => Number(s.trim()))
-            .filter((n) => Number.isInteger(n) && n > 0)
+          .split(",")
+          .map((s) => Number(s.trim()))
+          .filter((n) => Number.isInteger(n) && n > 0)
         : base.participantIds;
 
     return {
@@ -259,113 +259,73 @@ function SessionMatchContent() {
     });
   }, [meetup, courtActiveOverrides, courtAssignmentMap]);
 
-  // PostgreSQL(dailyminton/Supabase DB)에서 최신 정모 참가자 및 게스트 명단 실시간 동기화
+  // PostgreSQL(dailyminton/Supabase DB)에서 전체 회원과 정모 참가자·게스트 명단을 동시에 로드하여 Race Condition 없이 동기화
   useEffect(() => {
     let isMounted = true;
-    fetch(`/api/meetups?id=${meetupId}`, { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(
-        (
-          data: { source?: string; meetups?: MeetupScheduleDto[] } | null
-        ) => {
-          if (
-            !isMounted ||
-            data?.source !== "db" ||
-            !Array.isArray(data.meetups) ||
-            data.meetups.length === 0
-          ) {
-            return;
+
+    Promise.all([
+      fetch("/api/members", { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null),
+      fetch(`/api/meetups?id=${meetupId}`, { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null),
+    ]).then(
+      ([membersData, meetupRes]: [
+        MemberDto[] | null,
+        { source?: string; meetups?: MeetupScheduleDto[] } | null,
+      ]) => {
+        if (!isMounted) return;
+
+        const dbMembers = Array.isArray(membersData) ? membersData : [];
+        if (dbMembers.length > 0) {
+          setClubMembers(dbMembers);
+        }
+        const dbMemberMap = new Map<number, MemberDto>();
+        dbMembers.forEach((m) => dbMemberMap.set(m.id, m));
+
+        const loadedMeetup =
+          meetupRes?.source === "db" &&
+            Array.isArray(meetupRes.meetups) &&
+            meetupRes.meetups.length > 0
+            ? meetupRes.meetups[0]
+            : null;
+
+        if (loadedMeetup) {
+          setDbMeetup(loadedMeetup);
+        }
+
+        let cachedEloMap: Record<string, number> = {};
+        try {
+          const rawElo = localStorage.getItem("dailyminton_member_elos");
+          if (rawElo) {
+            cachedEloMap = JSON.parse(rawElo) as Record<string, number>;
           }
-          const loaded = data.meetups[0];
-          setDbMeetup(loaded);
+        } catch {
+          // ignore
+        }
 
-          setPlayers((prev) => {
-            // 이미 코트/대기/휴식/퇴장 등 경기가 진행된 상태가 아니라면 DB 참가자 기준으로 정확히 동기화
-            const hasActiveProgress = prev.some(
-              (p) =>
-                p.cockSubmitted ||
-                p.status !== "ARRIVED" ||
-                p.totalGameCount > 0
-            );
-            const targetIdSet = new Set(loaded.participantIds || []);
-            const dbGuestList = loaded.guests || [];
+        const effectiveParticipantIds = loadedMeetup
+          ? loadedMeetup.participantIds || []
+          : meetup.participantIds || [];
+        const effectiveGuests = loadedMeetup
+          ? loadedMeetup.guests || []
+          : meetup.guests || [];
 
-            if (!hasActiveProgress) {
-              const memberMap = new Map<number, MemberDto>();
-              clubMembers.forEach((m) => memberMap.set(m.id, m));
-              const baseTime = Date.now() - 3600 * 1000;
-              const syncedMembers: SessionPlayer[] = (
-                loaded.participantIds || []
-              )
-                .map((pid) => memberMap.get(pid))
-                .filter((m): m is MemberDto => m !== undefined)
-                .map((m, idx) => ({
-                  id: m.id,
-                  memberId: m.id,
-                  name: m.name,
-                  nickname: m.nickname,
-                  isGuest: false,
-                  role: m.role,
-                  gender: m.gender,
-                  grade: m.grade,
-                  ageGroup: m.ageGroup,
-                  injuryLevel: "NONE",
-                  eloScore: m.eloScore ?? GRADE_BASE_ELO[m.grade],
-                  cockSubmitted: false,
-                  cockQuantity: 0,
-                  status: "ARRIVED",
-                  arrivalOrder: idx + 1,
-                  lastWaitStartedAt: baseTime + idx * 60000,
-                  totalGameCount: 0,
-                  consecutiveGameCount: 0,
-                  wins: 0,
-                  losses: 0,
-                }));
+        setPlayers((prev) => {
+          const hasActiveProgress = prev.some(
+            (p) =>
+              p.cockSubmitted ||
+              p.status !== "ARRIVED" ||
+              p.totalGameCount > 0
+          );
 
-              const syncedGuests: SessionPlayer[] = dbGuestList.map(
-                (g, gIdx) => ({
-                  id: g.id,
-                  name: g.name,
-                  nickname: g.name,
-                  isGuest: true,
-                  role: "MEMBER",
-                  gender: g.gender,
-                  grade: g.grade,
-                  ageGroup: g.ageGroup,
-                  injuryLevel: "NONE",
-                  eloScore: GRADE_BASE_ELO[g.grade],
-                  cockSubmitted: false,
-                  cockQuantity: 0,
-                  status: "ARRIVED",
-                  arrivalOrder: syncedMembers.length + gIdx + 1,
-                  lastWaitStartedAt:
-                    baseTime + (syncedMembers.length + gIdx) * 60000,
-                  totalGameCount: 0,
-                  consecutiveGameCount: 0,
-                  wins: 0,
-                  losses: 0,
-                })
-              );
-
-              return [...syncedMembers, ...syncedGuests];
-            }
-
-            // 이미 경기 진행 중이면 기존 선수 상태는 유지하되 누락된 게스트/회원만 추가
-            const existingIds = new Set(
-              prev.filter((p) => !p.isGuest && p.memberId).map((p) => p.memberId!)
-            );
-            const existingGuestNames = new Set(
-              prev.filter((p) => p.isGuest).map((p) => p.name)
-            );
-            const memberMap = new Map<number, MemberDto>();
-            clubMembers.forEach((m) => memberMap.set(m.id, m));
-
-            const additions: SessionPlayer[] = [];
-            targetIdSet.forEach((pid) => {
-              if (existingIds.has(pid)) return;
-              const m = memberMap.get(pid);
-              if (!m) return;
-              additions.push({
+          if (!hasActiveProgress) {
+            const baseTime = Date.now() - 3600 * 1000;
+            const syncedMembers: SessionPlayer[] = effectiveParticipantIds
+              .map((pid) => dbMemberMap.get(pid))
+              .filter((m): m is MemberDto => m !== undefined)
+              .map((m, idx) => ({
                 id: m.id,
                 memberId: m.id,
                 name: m.name,
@@ -375,24 +335,25 @@ function SessionMatchContent() {
                 gender: m.gender,
                 grade: m.grade,
                 ageGroup: m.ageGroup,
-                injuryLevel: "NONE",
-                eloScore: m.eloScore ?? GRADE_BASE_ELO[m.grade],
+                injuryLevel: m.injuryLevel ?? "NONE",
+                eloScore:
+                  m.eloScore ??
+                  cachedEloMap[String(m.id)] ??
+                  GRADE_BASE_ELO[m.grade],
                 cockSubmitted: false,
                 cockQuantity: 0,
                 status: "ARRIVED",
-                arrivalOrder: prev.length + additions.length + 1,
-                lastWaitStartedAt: Date.now(),
+                arrivalOrder: idx + 1,
+                lastWaitStartedAt: baseTime + idx * 60000,
                 totalGameCount: 0,
                 consecutiveGameCount: 0,
                 wins: 0,
                 losses: 0,
-              });
-            });
+              }));
 
-            dbGuestList.forEach((g) => {
-              if (existingGuestNames.has(g.name)) return;
-              additions.push({
-                id: g.id,
+            const syncedGuests: SessionPlayer[] = effectiveGuests.map(
+              (g, gIdx) => ({
+                id: g.id < 1_000_000_000 ? 1_000_000_000 + g.id : g.id,
                 name: g.name,
                 nickname: g.name,
                 isGuest: true,
@@ -405,61 +366,26 @@ function SessionMatchContent() {
                 cockSubmitted: false,
                 cockQuantity: 0,
                 status: "ARRIVED",
-                arrivalOrder: prev.length + additions.length + 1,
-                lastWaitStartedAt: Date.now(),
+                arrivalOrder: syncedMembers.length + gIdx + 1,
+                lastWaitStartedAt:
+                  baseTime + (syncedMembers.length + gIdx) * 60000,
                 totalGameCount: 0,
                 consecutiveGameCount: 0,
                 wins: 0,
                 losses: 0,
-              });
-            });
+              })
+            );
 
-            return additions.length > 0 ? [...prev, ...additions] : prev;
-          });
-        }
-      )
-      .catch(() => {
-        // ignore
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [meetupId, clubMembers]);
-
-  // PostgreSQL(dailyminton DB)에서 수정된 회원 성별·급수·연령대 실시간 동기화
-  useEffect(() => {
-    let isMounted = true;
-    fetch("/api/members", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: MemberDto[] | null) => {
-        if (!isMounted || !Array.isArray(data) || data.length === 0) return;
-        setClubMembers(data);
-        const dbMemberMap = new Map<number, MemberDto>();
-        data.forEach((m) => dbMemberMap.set(m.id, m));
-
-        setPlayers((prev) => {
-          let cachedEloMap: Record<string, number> = {};
-          try {
-            const rawElo = localStorage.getItem("dailyminton_member_elos");
-            if (rawElo) {
-              cachedEloMap = JSON.parse(rawElo) as Record<string, number>;
-            }
-          } catch {
-            // ignore
+            return [...syncedMembers, ...syncedGuests];
           }
 
+          // 이미 경기 진행 중이면 기존 선수 정보 최신화 + 누락된 회원/게스트만 추가
           const updated = prev.map((p) => {
             if (!p.memberId) return p;
             const synced = dbMemberMap.get(p.memberId);
             if (!synced) return p;
             const isPreGame =
               p.totalGameCount === 0 && p.wins === 0 && p.losses === 0;
-            const nextElo = isPreGame
-              ? (synced.eloScore ??
-                cachedEloMap[String(p.memberId)] ??
-                p.eloScore)
-              : p.eloScore;
             return {
               ...p,
               name: synced.name,
@@ -468,39 +394,46 @@ function SessionMatchContent() {
               gender: synced.gender,
               grade: synced.grade,
               ageGroup: synced.ageGroup,
-              eloScore: nextElo,
+              injuryLevel: synced.injuryLevel ?? p.injuryLevel,
+              eloScore: isPreGame
+                ? (synced.eloScore ??
+                  cachedEloMap[String(p.memberId)] ??
+                  p.eloScore)
+                : p.eloScore,
             };
           });
 
-          // INITIAL_MEMBERS에 없었으나 DB에 존재하는 정모 참가자도 누락 없이 추가
-          const existingMemberIds = new Set(
-            updated.map((p) => p.memberId).filter(Boolean)
+          const existingIds = new Set(
+            updated.filter((p) => !p.isGuest && p.memberId).map((p) => p.memberId!)
           );
-          const missingPlayers: SessionPlayer[] = [];
-          const targetIds = meetup.participantIds || [];
-          targetIds.forEach((pid) => {
-            if (existingMemberIds.has(pid)) return;
-            const dbMember = dbMemberMap.get(pid);
-            if (!dbMember) return;
-            missingPlayers.push({
-              id: dbMember.id,
-              memberId: dbMember.id,
-              name: dbMember.name,
-              nickname: dbMember.nickname,
+          const existingGuestNames = new Set(
+            updated.filter((p) => p.isGuest).map((p) => p.name)
+          );
+          const additions: SessionPlayer[] = [];
+
+          effectiveParticipantIds.forEach((pid) => {
+            if (existingIds.has(pid)) return;
+            const m = dbMemberMap.get(pid);
+            if (!m) return;
+            additions.push({
+              id: m.id,
+              memberId: m.id,
+              name: m.name,
+              nickname: m.nickname,
               isGuest: false,
-              role: dbMember.role,
-              gender: dbMember.gender,
-              grade: dbMember.grade,
-              ageGroup: dbMember.ageGroup,
+              role: m.role,
+              gender: m.gender,
+              grade: m.grade,
+              ageGroup: m.ageGroup,
               injuryLevel: "NONE",
               eloScore:
-                dbMember.eloScore ??
-                cachedEloMap[String(dbMember.id)] ??
-                GRADE_BASE_ELO[dbMember.grade],
+                m.eloScore ??
+                cachedEloMap[String(m.id)] ??
+                GRADE_BASE_ELO[m.grade],
               cockSubmitted: false,
               cockQuantity: 0,
               status: "ARRIVED",
-              arrivalOrder: updated.length + missingPlayers.length + 1,
+              arrivalOrder: updated.length + additions.length + 1,
               lastWaitStartedAt: Date.now(),
               totalGameCount: 0,
               consecutiveGameCount: 0,
@@ -509,18 +442,41 @@ function SessionMatchContent() {
             });
           });
 
-          return missingPlayers.length > 0
-            ? [...updated, ...missingPlayers]
-            : updated;
+          effectiveGuests.forEach((g) => {
+            if (existingGuestNames.has(g.name)) return;
+            additions.push({
+              id: g.id < 1_000_000_000 ? 1_000_000_000 + g.id : g.id,
+              name: g.name,
+              nickname: g.name,
+              isGuest: true,
+              role: "MEMBER",
+              gender: g.gender,
+              grade: g.grade,
+              ageGroup: g.ageGroup,
+              injuryLevel: "NONE",
+              eloScore: GRADE_BASE_ELO[g.grade],
+              cockSubmitted: false,
+              cockQuantity: 0,
+              status: "ARRIVED",
+              arrivalOrder: updated.length + additions.length + 1,
+              lastWaitStartedAt: Date.now(),
+              totalGameCount: 0,
+              consecutiveGameCount: 0,
+              wins: 0,
+              losses: 0,
+            });
+          });
+
+          return additions.length > 0 ? [...updated, ...additions] : updated;
         });
-      })
-      .catch(() => {
-        // fallback 유지
-      });
+      }
+    );
+
     return () => {
       isMounted = false;
     };
-  }, [meetup.participantIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetupId]);
 
   const [draftMatch, setDraftMatch] = useState<MatchGame | null>(null);
   const [dismissedAutoReservationSig, setDismissedAutoReservationSig] =
@@ -1053,8 +1009,8 @@ function SessionMatchContent() {
     ).length;
     const topPlayer =
       sessionWinRateRankings.length > 0 &&
-      (sessionWinRateRankings[0].decidedGames > 0 ||
-        sessionWinRateRankings[0].player.totalGameCount > 0)
+        (sessionWinRateRankings[0].decidedGames > 0 ||
+          sessionWinRateRankings[0].player.totalGameCount > 0)
         ? sessionWinRateRankings[0]
         : null;
 
@@ -1079,13 +1035,13 @@ function SessionMatchContent() {
         prev.map((p) =>
           p.id === playerId
             ? {
-                ...p,
-                cockSubmitted: true,
-                cockQuantity: quantity,
-                cockSubmittedAt: nowTime,
-                status: "WAITING",
-                lastWaitStartedAt: Date.now(),
-              }
+              ...p,
+              cockSubmitted: true,
+              cockQuantity: quantity,
+              cockSubmittedAt: nowTime,
+              status: "WAITING",
+              lastWaitStartedAt: Date.now(),
+            }
             : p
         )
       );
@@ -1121,12 +1077,12 @@ function SessionMatchContent() {
         prev.map((p) =>
           p.id === playerId
             ? {
-                ...p,
-                cockSubmitted: false,
-                cockQuantity: 0,
-                cockSubmittedAt: undefined,
-                status: "ARRIVED",
-              }
+              ...p,
+              cockSubmitted: false,
+              cockQuantity: 0,
+              cockSubmittedAt: undefined,
+              status: "ARRIVED",
+            }
             : p
         )
       );
@@ -1150,13 +1106,13 @@ function SessionMatchContent() {
       prev.map((p, idx) =>
         p.status === "ARRIVED"
           ? {
-              ...p,
-              cockSubmitted: true,
-              cockQuantity: 2,
-              cockSubmittedAt: nowTime,
-              status: "WAITING",
-              lastWaitStartedAt: baseNow + idx * 10,
-            }
+            ...p,
+            cockSubmitted: true,
+            cockQuantity: 2,
+            cockSubmittedAt: nowTime,
+            status: "WAITING",
+            lastWaitStartedAt: baseNow + idx * 10,
+          }
           : p
       )
     );
@@ -1212,11 +1168,11 @@ function SessionMatchContent() {
           return prev.map((h, i) =>
             i === existingIdx
               ? {
-                  ...h,
-                  playerIds,
-                  confirmedAt: nowStr,
-                  autoConfirmed: autoConfirmed || h.autoConfirmed,
-                }
+                ...h,
+                playerIds,
+                confirmedAt: nowStr,
+                autoConfirmed: autoConfirmed || h.autoConfirmed,
+              }
               : h
           );
         }
@@ -1602,6 +1558,9 @@ function SessionMatchContent() {
       };
       appendDecisionLog(confirmedMatch.decisionLog);
       setWaitingMatches((prev) => [...prev, confirmedMatch]);
+      if (queueFilter !== "ALL" && queueFilter !== confirmedMatch.matchType) {
+        setQueueFilter("ALL");
+      }
       upsertConfirmedHistory(confirmedMatch, isAutoConfirmedBySystem);
       setDraftMatch(null);
       setDismissedAutoReservationSig(currentReservationStateSig);
@@ -1610,6 +1569,7 @@ function SessionMatchContent() {
       activeDraftMatch,
       checkPessimisticLockBlocked,
       appendDecisionLog,
+      queueFilter,
       currentReservationStateSig,
       upsertConfirmedHistory,
     ]
@@ -1713,9 +1673,9 @@ function SessionMatchContent() {
         const coPlayerEval =
           allFour.length === 4
             ? evaluateCoPlayerHistory(
-                allFour,
-                confirmedMatchHistory.filter((h) => h.matchId !== match.id)
-              )
+              allFour,
+              confirmedMatchHistory.filter((h) => h.matchId !== match.id)
+            )
             : undefined;
 
         return {
@@ -1791,11 +1751,11 @@ function SessionMatchContent() {
 
       const availableCourt = preferredCourtNumber
         ? courts.find(
-            (c) =>
-              c.courtNumber === preferredCourtNumber &&
-              c.isActive &&
-              !c.currentMatchId
-          )
+          (c) =>
+            c.courtNumber === preferredCourtNumber &&
+            c.isActive &&
+            !c.currentMatchId
+        )
         : courts.find((c) => c.isActive && !c.currentMatchId);
 
       if (!availableCourt) {
@@ -1943,7 +1903,7 @@ function SessionMatchContent() {
     [courts]
   );
 
-  // 경기 진행 현황판에서 정식회원 추가 / 게스트 등록 시 홈 화면 정모 일정(참가자 현황)에도 실시간 반영
+  // 경기 진행 현황판에서 회원 추가 / 게스트 등록 시 홈 화면 정모 일정(참가자 현황)에도 실시간 반영
   const syncSessionPlayersToHomeMeetup = useCallback(
     (nextPlayers: SessionPlayer[]) => {
       if (typeof window === "undefined") return;
@@ -1980,11 +1940,11 @@ function SessionMatchContent() {
           const nextList = baseList.map((m) =>
             m.id === meetupId
               ? {
-                  ...m,
-                  participantIds: memberIds,
-                  guests,
-                  currentParticipants: memberIds.length + guests.length,
-                }
+                ...m,
+                participantIds: memberIds,
+                guests,
+                currentParticipants: memberIds.length + guests.length,
+              }
               : m
           );
           sessionStorage.setItem(
@@ -2073,7 +2033,7 @@ function SessionMatchContent() {
         gender: member.gender,
         grade: member.grade,
         ageGroup: member.ageGroup,
-        injuryLevel: "NONE",
+        injuryLevel: member.injuryLevel ?? "NONE",
         eloScore: member.eloScore ?? GRADE_BASE_ELO[member.grade],
         cockSubmitted: false,
         cockQuantity: 0,
@@ -2092,7 +2052,7 @@ function SessionMatchContent() {
     [players, clubMembers, syncSessionPlayersToHomeMeetup]
   );
 
-  // 경기 운영 종료 시 정식회원들의 최종 ELO 레이팅 점수를 localStorage + PostgreSQL DB에 영구 반영 (홈 랭킹 탭 연동)
+  // 경기 운영 종료 시 회원들의 최종 ELO 레이팅 점수를 localStorage + PostgreSQL DB에 영구 반영 (홈 랭킹 탭 연동)
   const persistFinalEloRatings = useCallback(async () => {
     const eloUpdates = players
       .filter((p) => !p.isGuest && typeof p.memberId === "number")
@@ -2140,9 +2100,8 @@ function SessionMatchContent() {
   }, [players]);
 
   const handleOpenEndSessionModal = useCallback(() => {
-    void persistFinalEloRatings();
     setIsEndSessionModalOpen(true);
-  }, [persistFinalEloRatings]);
+  }, []);
 
   const handleFinalizeAndGoHome = useCallback(async () => {
     await persistFinalEloRatings();
@@ -2191,11 +2150,10 @@ function SessionMatchContent() {
       return (
         <div
           key={pid}
-          className={`flex items-center justify-between gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${
-            isFemale
+          className={`flex items-center justify-between gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs ${isFemale
               ? "border-pink-400/35 bg-pink-500/15 text-pink-100"
               : "border-sky-400/35 bg-sky-500/15 text-sky-100"
-          }`}
+            }`}
         >
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <span className="truncate font-bold">{p.name}</span>
@@ -2203,22 +2161,20 @@ function SessionMatchContent() {
               {gradeLabel}
             </span>
             <span
-              className={`rounded px-1.5 py-0.5 text-xs font-bold ${
-                isFemale
+              className={`rounded px-1.5 py-0.5 text-xs font-bold ${isFemale
                   ? "bg-pink-400/20 text-pink-200"
                   : "bg-sky-400/25 text-sky-200"
-              }`}
+                }`}
             >
               {displayElo}점{isMixed && !isFemale ? " (남+200)" : ""}
             </span>
             {/* [명세 6번] 운영진용 매칭 다양성 보조 지표: 선수 카드에 최근 5경기 내 현재 조합과의 동반 횟수 표시 */}
             {typeof recentOverlapCount === "number" && (
               <span
-                className={`rounded px-1.5 py-0.5 text-xs font-bold ${
-                  recentOverlapCount > 0
+                className={`rounded px-1.5 py-0.5 text-xs font-bold ${recentOverlapCount > 0
                     ? "bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/40"
                     : "bg-emerald-500/20 text-emerald-200"
-                }`}
+                  }`}
                 title="최근 5경기 내 현재 매칭 인원과 함께 뛴 횟수"
               >
                 5G동반 {recentOverlapCount}회
@@ -2259,7 +2215,7 @@ function SessionMatchContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0d0f14] text-zinc-100">
+    <div className="min-h-screen overflow-x-hidden bg-[#0d0f14] text-zinc-100">
       {/* 상단 운영 헤더 */}
       <header className="sticky top-0 z-20 border-b border-zinc-800/80 bg-[#0d0f14]/95 backdrop-blur-sm">
         <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
@@ -2295,7 +2251,7 @@ function SessionMatchContent() {
               👤 프로필 · 파트너/기피 설정
             </button>
 
-            {/* 모임장·운영진 전용: 매칭 결정 로그(90일 보존) & 정식회원 참석 추가 & 게스트 등록 버튼 */}
+            {/* 모임장·운영진 전용: 매칭 결정 로그(90일 보존) & 회원 참석 추가 & 게스트 등록 버튼 */}
             {isAdmin && (
               <>
                 <button
@@ -2311,7 +2267,7 @@ function SessionMatchContent() {
                   onClick={() => setIsAddMemberModalOpen(true)}
                   className="rounded-lg border border-zinc-700 bg-zinc-800/90 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-zinc-700"
                 >
-                  + 정식회원 참석 추가
+                  + 회원 참석 추가
                 </button>
 
                 <button
@@ -2345,16 +2301,14 @@ function SessionMatchContent() {
                   return next;
                 });
               }}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                isAdmin
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${isAdmin
                   ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
                   : "border-zinc-700 bg-zinc-800 text-zinc-400"
-              }`}
+                }`}
             >
               <span
-                className={`h-2 w-2 rounded-full ${
-                  isAdmin ? "bg-amber-400" : "bg-zinc-500"
-                }`}
+                className={`h-2 w-2 rounded-full ${isAdmin ? "bg-amber-400" : "bg-zinc-500"
+                  }`}
               />
               {isAdmin ? "운영진 권한" : "일반회원 권한"}
             </button>
@@ -2474,22 +2428,20 @@ function SessionMatchContent() {
               <button
                 type="button"
                 onClick={() => setArrivedTab("UNSUBMITTED")}
-                className={`flex-1 rounded-md py-1 text-xs font-semibold transition ${
-                  arrivedTab === "UNSUBMITTED"
+                className={`flex-1 rounded-md py-1 text-xs font-semibold transition ${arrivedTab === "UNSUBMITTED"
                     ? "bg-zinc-700 text-white"
                     : "text-zinc-400 hover:text-zinc-200"
-                }`}
+                  }`}
               >
                 콕 미제출 ({arrivedPlayers.length}명)
               </button>
               <button
                 type="button"
                 onClick={() => setArrivedTab("SUBMITTED")}
-                className={`flex-1 rounded-md py-1 text-xs font-semibold transition ${
-                  arrivedTab === "SUBMITTED"
+                className={`flex-1 rounded-md py-1 text-xs font-semibold transition ${arrivedTab === "SUBMITTED"
                     ? "bg-emerald-600/80 text-white"
                     : "text-zinc-400 hover:text-zinc-200"
-                }`}
+                  }`}
               >
                 제출 완료 · 취소 ({cockSummary.submittedCount}명)
               </button>
@@ -2584,13 +2536,12 @@ function SessionMatchContent() {
                 return (
                   <div
                     key={court.courtNumber}
-                    className={`rounded-xl border p-3 transition ${
-                      !court.isActive
+                    className={`rounded-xl border p-3 transition ${!court.isActive
                         ? "border-zinc-800/50 bg-zinc-900/30 opacity-60"
                         : currentMatch
                           ? "border-emerald-500/45 bg-emerald-950/15"
                           : "border-zinc-800 bg-zinc-900/50"
-                    }`}
+                      }`}
                   >
                     <div className="mb-2 flex items-center justify-between">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -2795,11 +2746,10 @@ function SessionMatchContent() {
                     key={key}
                     type="button"
                     onClick={() => setQueueFilter(key)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
-                      queueFilter === key
+                    className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${queueFilter === key
                         ? "bg-[#5a9cf8] text-white"
                         : "text-zinc-400 hover:text-zinc-200"
-                    }`}
+                      }`}
                   >
                     {label}
                   </button>
@@ -2844,11 +2794,10 @@ function SessionMatchContent() {
 
                 return (
                   <div
-                    className={`mb-4 rounded-xl border-2 p-3.5 ${
-                      isReserved
+                    className={`mb-4 rounded-xl border-2 p-3.5 ${isReserved
                         ? "border-amber-400 bg-amber-500/10"
                         : "border-[#5a9cf8] bg-[#5a9cf8]/10"
-                    }`}
+                      }`}
                   >
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -2866,11 +2815,10 @@ function SessionMatchContent() {
                         </span>
                         {/* [명세 6번] 운영진용 매칭 다양성 보조 지표: 최근 5경기 내 이 조합과 몇 번 함께 뛰었는지 배지 표시 */}
                         <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                            recentOverlap === 0
+                          className={`rounded-full px-2 py-0.5 text-xs font-bold ${recentOverlap === 0
                               ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40"
                               : "bg-amber-500/25 text-amber-200 ring-1 ring-amber-400/50"
-                          }`}
+                            }`}
                         >
                           {recentOverlap === 0
                             ? "✨ 최근 5경기 동반 0회 (새 조합)"
@@ -2889,9 +2837,8 @@ function SessionMatchContent() {
                         )}
                       </div>
                       <span
-                        className={`text-xs ${
-                          isReserved ? "text-amber-200" : "text-blue-200"
-                        }`}
+                        className={`text-xs ${isReserved ? "text-amber-200" : "text-blue-200"
+                          }`}
                       >
                         {activeDraftMatch.reasonSummary.split("|")[0]?.trim()} |{" "}
                         {isMixed
@@ -2903,11 +2850,10 @@ function SessionMatchContent() {
                     {/* [명세 7번] 운영진 공백 시 신뢰도 기준 충족 여부에 따른 자동 승인 상태 표시 */}
                     {isAdminVacuumDetected && (
                       <div
-                        className={`mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-xs ${
-                          activeDraftMatch.isAutoConfirmEligible
+                        className={`mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-1.5 text-xs ${activeDraftMatch.isAutoConfirmEligible
                             ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-200"
                             : "border-rose-400/45 bg-rose-500/15 text-rose-200"
-                        }`}
+                          }`}
                       >
                         {activeDraftMatch.isAutoConfirmEligible ? (
                           <span>
@@ -2916,7 +2862,7 @@ function SessionMatchContent() {
                             직전 1~2경기 재회 0건) —{" "}
                             <strong>
                               {autoConfirmTimerState.draftId ===
-                              activeDraftMatch.id
+                                activeDraftMatch.id
                                 ? autoConfirmTimerState.remainingSec
                                 : 45}
                               초
@@ -2993,11 +2939,10 @@ function SessionMatchContent() {
                         <button
                           type="button"
                           onClick={() => handleConfirmDraftToQueue(false)}
-                          className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${
-                            isReserved
+                          className={`rounded-lg px-3.5 py-1.5 text-xs font-bold transition ${isReserved
                               ? "bg-amber-400 text-zinc-950 hover:bg-amber-300"
                               : "bg-[#5a9cf8] text-white hover:bg-[#488be8]"
-                          }`}
+                            }`}
                         >
                           {isReserved
                             ? "예약매칭 대기현황 확정"
@@ -3039,13 +2984,12 @@ function SessionMatchContent() {
                   return (
                     <div
                       key={match.id}
-                      className={`rounded-xl border p-3.5 ${
-                        match.autoConfirmed
+                      className={`rounded-xl border p-3.5 ${match.autoConfirmed
                           ? "border-emerald-400/60 bg-emerald-950/15"
                           : isReserved
                             ? "border-amber-500/50 bg-amber-950/15"
                             : "border-zinc-800 bg-zinc-900/70"
-                      }`}
+                        }`}
                     >
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
@@ -3075,11 +3019,10 @@ function SessionMatchContent() {
                           </span>
                           {/* [명세 6번] 운영진용 매칭 다양성 보조 지표 */}
                           <span
-                            className={`rounded-full px-2 py-0.5 text-xs font-bold ${
-                              recentOverlap === 0
+                            className={`rounded-full px-2 py-0.5 text-xs font-bold ${recentOverlap === 0
                                 ? "bg-emerald-500/20 text-emerald-200"
                                 : "bg-amber-500/25 text-amber-200"
-                            }`}
+                              }`}
                           >
                             {recentOverlap === 0
                               ? "✨ 최근 5경기 동반 0회"
@@ -3200,11 +3143,10 @@ function SessionMatchContent() {
                   <button
                     type="button"
                     onClick={handleAutoMatch}
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold shadow-sm transition ${
-                      isReservationModeActive
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold shadow-sm transition ${isReservationModeActive
                         ? "bg-amber-400 text-zinc-950 hover:bg-amber-300"
                         : "bg-[#5a9cf8] text-white hover:bg-[#488be8]"
-                    }`}
+                      }`}
                   >
                     {isReservationModeActive ? "📌 예약매칭" : "⚡ 자동매칭"}
                   </button>
@@ -3253,11 +3195,10 @@ function SessionMatchContent() {
                       key={opt}
                       type="button"
                       onClick={() => setPlayerSort(opt)}
-                      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
-                        playerSort === opt
+                      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${playerSort === opt
                           ? "bg-zinc-700 text-white"
                           : "text-zinc-400 hover:text-zinc-200"
-                      }`}
+                        }`}
                     >
                       {label}
                     </button>
@@ -3559,9 +3500,9 @@ function SessionMatchContent() {
               : waitingMatches.find((m) => m.id === swapTarget?.matchId);
             const remainingThreePlayers = targetMatchForSwap
               ? [...targetMatchForSwap.teamA, ...targetMatchForSwap.teamB]
-                  .filter((id) => id !== swapTarget?.oldPlayerId)
-                  .map((id) => playerMap.get(id))
-                  .filter((p): p is SessionPlayer => p !== undefined)
+                .filter((id) => id !== swapTarget?.oldPlayerId)
+                .map((id) => playerMap.get(id))
+                .filter((p): p is SessionPlayer => p !== undefined)
               : [];
 
             const rawSwapCandidates = [
@@ -3749,7 +3690,7 @@ function SessionMatchContent() {
         </form>
       </Modal>
 
-      {/* 정식회원 참석예정자 추가 모달 (검색 + 넓은 크기) */}
+      {/* 회원 참석예정자 추가 모달 (검색 + 넓은 크기) */}
       <Modal
         isOpen={isAddMemberModalOpen}
         onClose={() => {
@@ -3790,11 +3731,11 @@ function SessionMatchContent() {
             const kw = addMemberSearch.trim().toLowerCase();
             const filteredMembers = kw
               ? unaddedClubMembers.filter(
-                  (m) =>
-                    m.name.toLowerCase().includes(kw) ||
-                    m.nickname.toLowerCase().includes(kw) ||
-                    `${m.grade}조`.toLowerCase().includes(kw)
-                )
+                (m) =>
+                  m.name.toLowerCase().includes(kw) ||
+                  m.nickname.toLowerCase().includes(kw) ||
+                  `${m.grade}조`.toLowerCase().includes(kw)
+              )
               : unaddedClubMembers;
 
             if (filteredMembers.length === 0) {
@@ -3852,13 +3793,13 @@ function SessionMatchContent() {
                 prev.map((m) =>
                   m.id === memberId
                     ? {
-                        ...m,
-                        ...updates,
-                        avatarGradient: getAvatarGradientByGender(
-                          updates.gender ?? m.gender,
-                          m.role
-                        ),
-                      }
+                      ...m,
+                      ...updates,
+                      avatarGradient: getAvatarGradientByGender(
+                        updates.gender ?? m.gender,
+                        m.role
+                      ),
+                    }
                     : m
                 )
               );
@@ -3866,13 +3807,14 @@ function SessionMatchContent() {
                 prev.map((p) =>
                   p.memberId === memberId
                     ? {
-                        ...p,
-                        name: updates.name ?? p.name,
-                        nickname: updates.nickname ?? p.nickname,
-                        gender: updates.gender ?? p.gender,
-                        grade: updates.grade ?? p.grade,
-                        ageGroup: updates.ageGroup ?? p.ageGroup,
-                      }
+                      ...p,
+                      name: updates.name ?? p.name,
+                      nickname: updates.nickname ?? p.nickname,
+                      gender: updates.gender ?? p.gender,
+                      grade: updates.grade ?? p.grade,
+                      ageGroup: updates.ageGroup ?? p.ageGroup,
+                      injuryLevel: updates.injuryLevel ?? p.injuryLevel,
+                    }
                     : p
                 )
               );
@@ -4193,26 +4135,24 @@ function SessionMatchContent() {
                 return (
                   <div
                     key={p.id}
-                    className={`flex flex-col justify-between gap-3 rounded-xl border px-3.5 py-3 transition sm:flex-row sm:items-center ${
-                      idx === 0 && hasPlayed
+                    className={`flex flex-col justify-between gap-3 rounded-xl border px-3.5 py-3 transition sm:flex-row sm:items-center ${idx === 0 && hasPlayed
                         ? "border-amber-400/50 bg-amber-500/10"
                         : isFemale
                           ? "border-pink-400/30 bg-pink-500/10"
                           : "border-sky-400/30 bg-sky-500/10"
-                    }`}
+                      }`}
                   >
                     {/* 좌측: 순위 + 이름/급수/성별 정보 */}
                     <div className="flex min-w-0 items-center gap-3">
                       <div
-                        className={`flex h-9 w-12 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold ${
-                          rank === 1 && hasPlayed
+                        className={`flex h-9 w-12 shrink-0 items-center justify-center rounded-lg text-xs font-extrabold ${rank === 1 && hasPlayed
                             ? "bg-amber-400 text-zinc-950 shadow-sm"
                             : rank === 2 && hasPlayed
                               ? "bg-zinc-300 text-zinc-950"
                               : rank === 3 && hasPlayed
                                 ? "bg-amber-700/80 text-amber-100"
                                 : "bg-zinc-800 text-zinc-300"
-                        }`}
+                          }`}
                       >
                         {rank === 1 && hasPlayed
                           ? "🥇 1위"
@@ -4234,11 +4174,10 @@ function SessionMatchContent() {
                             </span>
                           )}
                           <span
-                            className={`rounded px-1.5 py-0.5 text-xs font-bold ${
-                              isFemale
+                            className={`rounded px-1.5 py-0.5 text-xs font-bold ${isFemale
                                 ? "bg-pink-400/25 text-pink-200"
                                 : "bg-sky-400/25 text-sky-200"
-                            }`}
+                              }`}
                           >
                             {isFemale ? "여" : "남"} · {p.grade}조
                           </span>
@@ -4256,13 +4195,12 @@ function SessionMatchContent() {
                             </strong>
                           </span>
                           <span
-                            className={`font-bold ${
-                              eloDiff > 0
+                            className={`font-bold ${eloDiff > 0
                                 ? "text-emerald-300"
                                 : eloDiff < 0
                                   ? "text-rose-300"
                                   : "text-zinc-400"
-                            }`}
+                              }`}
                           >
                             ({eloDiff > 0 ? `+${eloDiff}` : eloDiff}점)
                           </span>
@@ -4298,28 +4236,26 @@ function SessionMatchContent() {
                         <div className="flex items-baseline justify-end gap-1">
                           <span className="text-xs text-zinc-400">승률</span>
                           <span
-                            className={`text-sm font-extrabold ${
-                              !hasPlayed
+                            className={`text-sm font-extrabold ${!hasPlayed
                                 ? "text-zinc-400"
                                 : winRate >= 60
                                   ? "text-amber-300"
                                   : winRate >= 50
                                     ? "text-emerald-300"
                                     : "text-sky-200"
-                            }`}
+                              }`}
                           >
                             {winRate.toFixed(1)}%
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                           <div
-                            className={`h-full rounded-full transition-all ${
-                              winRate >= 60
+                            className={`h-full rounded-full transition-all ${winRate >= 60
                                 ? "bg-amber-400"
                                 : winRate >= 50
                                   ? "bg-emerald-400"
                                   : "bg-[#5a9cf8]"
-                            }`}
+                              }`}
                             style={{
                               width: `${Math.min(100, Math.max(0, winRate))}%`,
                             }}

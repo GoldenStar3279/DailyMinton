@@ -1,6 +1,7 @@
 export type MemberRole = "LEADER" | "ADMIN" | "MEMBER";
 export type Gender = "MALE" | "FEMALE";
 export type Grade = "S" | "A" | "B" | "C" | "D" | "E" | "F" | "G";
+export type InjuryLevel = "NONE" | "MILD" | "SEVERE";
 export type AgeGroup =
   | "UNDER_10"
   | "20S"
@@ -50,6 +51,7 @@ export interface MemberDto {
   ageGroup: AgeGroup;
   bio: string;
   joinedAt: string; // YYYY-MM-DD or ISO-8601
+  injuryLevel?: InjuryLevel; // 부상 정도 (NONE / MILD -50 / SEVERE -120)
   eloScore?: number; // 실시간 반영되는 순수 ELO 레이팅 점수
   avatarGradient: string;
   avatarEmoji: string;

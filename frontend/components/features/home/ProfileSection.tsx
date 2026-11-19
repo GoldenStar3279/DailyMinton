@@ -7,6 +7,7 @@ import type {
   AgeGroup,
   Gender,
   Grade,
+  InjuryLevel,
   MemberDto,
   MemberPreferenceDto,
 } from "@/types/home";
@@ -21,6 +22,7 @@ interface ProfileSectionProps {
       gender?: Gender;
       grade?: Grade;
       ageGroup?: AgeGroup;
+      injuryLevel?: InjuryLevel;
       bio?: string;
     }
   ) => void;
@@ -51,9 +53,6 @@ const ProfileSectionComponent: React.FC<ProfileSectionProps> = ({
   onPreferencesUpdated,
 }) => {
   const [selectedMemberId, setSelectedMemberId] = useState<number>(3); // 기본: 한태호(3)
-  const [injuryLevel, setInjuryLevel] = useState<"NONE" | "MILD" | "SEVERE">(
-    "NONE"
-  );
   const [preferencesMap, setPreferencesMap] = useState<
     Record<number, MemberPreferenceDto>
   >(() => {
@@ -311,6 +310,7 @@ const ProfileSectionComponent: React.FC<ProfileSectionProps> = ({
     e.preventDefault();
     onUpdateMemberProfile(currentMember.id, {
       nickname: editNickname.trim() || currentMember.nickname,
+      injuryLevel: currentMember.injuryLevel ?? "NONE",
       bio: editBio.trim() || currentMember.bio,
     });
     savePreferenceUpdate(currentPref);
@@ -775,10 +775,18 @@ const ProfileSectionComponent: React.FC<ProfileSectionProps> = ({
             <select
               id="profile-injury"
               name="injuryLevel"
-              value={injuryLevel}
-              onChange={(e) =>
-                setInjuryLevel(e.target.value as "NONE" | "MILD" | "SEVERE")
-              }
+              value={currentMember.injuryLevel ?? "NONE"}
+              onChange={(e) => {
+                const nextInjury = e.target.value as InjuryLevel;
+                onUpdateMemberProfile(currentMember.id, {
+                  injuryLevel: nextInjury,
+                });
+                setSavedNotice(
+                  nextInjury === "NONE"
+                    ? "부상 상태가 정상으로 변경되어 자동매칭에 즉시 반영됩니다."
+                    : `부상 정도(${nextInjury === "MILD" ? "경미 -50점" : "심함 -120점"})가 자동매칭에 즉시 반영됩니다.`
+                );
+              }}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none"
             >
               <option value="NONE">정상 (부상 없음)</option>

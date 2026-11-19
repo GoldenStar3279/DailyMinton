@@ -30,7 +30,7 @@ const GenderBadgeComponent: React.FC<GenderBadgeProps> = ({
   const isFemale = gender === "FEMALE";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md px-2.5 py-0.5 text-xs font-semibold tracking-tight ring-1 sm:text-sm ${
+      className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold tracking-tight ring-1 sm:px-2.5 sm:text-sm ${
         isFemale
           ? "bg-pink-400/25 text-pink-200 ring-pink-400/45"
           : "bg-sky-400/25 text-sky-200 ring-sky-400/45"

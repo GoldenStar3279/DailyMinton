@@ -2247,18 +2247,17 @@ function SessionMatchContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* 모든 회원(일반회원 및 운영진) 접근 가능: 경기 진행 중 프로필(희망 파트너·기피 인원) 설정 버튼 */}
-            <button
-              type="button"
-              onClick={() => setIsProfileModalOpen(true)}
-              className="inline-flex items-center gap-1 rounded-lg border border-sky-400/40 bg-sky-500/15 px-3 py-1.5 text-xs font-bold text-sky-200 transition hover:bg-sky-500/25"
-            >
-              👤 프로필 · 파트너/기피 설정
-            </button>
-
-            {/* 모임장·운영진 전용: 매칭 결정 로그(90일 보존) & 회원 참석 추가 & 게스트 등록 버튼 */}
+            {/* 모임장·운영진 전용: 프로필(파트너/기피 설정) & 매칭 결정 로그(90일 보존) & 회원 참석 추가 & 게스트 등록 버튼 */}
             {isAdmin && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setIsProfileModalOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-400/40 bg-sky-500/15 px-3 py-1.5 text-xs font-bold text-sky-200 transition hover:bg-sky-500/25"
+                >
+                  👤 프로필 · 파트너/기피 설정
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setIsDecisionLogModalOpen(true)}
